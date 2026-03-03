@@ -1,5 +1,6 @@
 const IPC_CHANNELS = {
   VOICE_PROCESS: 'voice:process',
+  WORK_TEXT_PROCESS: 'work:text',
   DEMO_START: 'demo:start',
   DEMO_END: 'demo:end',
   DEMO_FINALIZE: 'demo:finalize',
@@ -8,6 +9,7 @@ const IPC_CHANNELS = {
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',
   SKILLS_LIST: 'skills:list',
+  SKILLS_DELETE: 'skills:delete',
   EXEC_INTERRUPT: 'exec:interrupt',
   STATUS_UPDATE: 'status:update',
   EXEC_STATE: 'exec:state'

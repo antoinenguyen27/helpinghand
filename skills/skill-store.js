@@ -83,3 +83,19 @@ export async function loadAllSkills() {
     return [];
   }
 }
+
+export async function deleteSkill({ domain, filename }) {
+  const safeDomain = String(domain || '').replace(/[^a-z0-9.-]+/gi, '-').toLowerCase();
+  const safeFilename = path.basename(String(filename || ''));
+  if (!safeDomain || !safeFilename.endsWith('.md')) {
+    throw new Error('Invalid skill identifier.');
+  }
+
+  const domainDir = path.resolve(SKILLS_DIR, safeDomain);
+  const target = path.resolve(domainDir, safeFilename);
+  if (!target.startsWith(`${domainDir}${path.sep}`)) {
+    throw new Error('Invalid skill path.');
+  }
+
+  await fs.unlink(target);
+}

@@ -14,6 +14,14 @@ const DEMO_STAGE = {
   REVIEW: 'review'
 };
 
+const INITIAL_SETTINGS_DRAFT = {
+  openrouterKey: '',
+  googleKey: '',
+  elevenlabsKey: '',
+  elevenlabsVoiceId: '',
+  debugMode: false
+};
+
 function toFeedItem(type, message) {
   return { id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, type, message };
 }
@@ -33,18 +41,33 @@ async function playAudioFromBase64(audioBase64, mimeType = 'audio/mpeg') {
   }
 }
 
+function settingsToDraft(next = {}) {
+  return {
+    ...INITIAL_SETTINGS_DRAFT,
+    debugMode: Boolean(next.debugMode)
+  };
+}
+
 export default function App() {
   const ua = typeof window !== 'undefined' ? window.ua : undefined;
   const [mode, setMode] = useState(MODES.WORK);
   const [statusItems, setStatusItems] = useState([]);
   const [skills, setSkills] = useState([]);
   const [settings, setSettings] = useState({});
+  const [settingsDraft, setSettingsDraft] = useState(INITIAL_SETTINGS_DRAFT);
+  const [settingsTouched, setSettingsTouched] = useState({});
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsError, setSettingsError] = useState('');
+  const [deletingSkillId, setDeletingSkillId] = useState('');
   const [processing, setProcessing] = useState(false);
   const [executionRunning, setExecutionRunning] = useState(false);
   const [demoStage, setDemoStage] = useState(DEMO_STAGE.CAPTURE);
   const [demoAwaitingConfirmation, setDemoAwaitingConfirmation] = useState(false);
   const [demoReviewBusy, setDemoReviewBusy] = useState(false);
   const [demoCanFinalize, setDemoCanFinalize] = useState(false);
+  const [chatInput, setChatInput] = useState('');
+  const [chatComposerOpen, setChatComposerOpen] = useState(false);
   const previousModeRef = useRef(null);
   const isDemoRecordingRef = useRef(false);
   const stopDemoAndFlushRef = useRef(async () => {});
@@ -62,7 +85,9 @@ export default function App() {
   const refreshSettings = useCallback(async () => {
     if (!ua) return;
     const next = await ua.getSettings();
-    setSettings(next);
+    setSettings(next || {});
+    setSettingsDraft(settingsToDraft(next || {}));
+    setSettingsTouched({});
   }, [ua]);
 
   const processSegment = useCallback(
@@ -94,8 +119,33 @@ export default function App() {
       if (result.ttsAudioBase64) {
         await playAudioFromBase64(result.ttsAudioBase64, result.ttsMimeType || 'audio/mpeg');
       }
+      return result;
     },
     [appendStatus, refreshSkills, ua]
+  );
+
+  const processText = useCallback(
+    async (text) => {
+      if (!ua) throw new Error('Electron bridge unavailable (window.ua missing).');
+      if (mode !== MODES.WORK) {
+        throw new Error('Text input is currently available only in Work mode.');
+      }
+      const trimmed = text.trim();
+      if (!trimmed) return null;
+
+      appendStatus('status', 'Sending text command for processing (mode=work).');
+      const result = await ua.processText(trimmed, MODES.WORK);
+      appendStatus(
+        result.error ? 'error' : 'status',
+        result.error ? 'Text processing returned an error (mode=work).' : 'Text processing completed (mode=work).'
+      );
+      if (result.response) appendStatus('agent', result.response);
+      if (result.ttsAudioBase64) {
+        await playAudioFromBase64(result.ttsAudioBase64, result.ttsMimeType || 'audio/mpeg');
+      }
+      return result;
+    },
+    [appendStatus, mode, ua]
   );
 
   const { isRecording: isDemoRecording, toggle: toggleDemoRecording, stopAndFlush: stopDemoAndFlush } =
@@ -266,6 +316,62 @@ export default function App() {
     }
   }, [appendStatus, demoReviewBusy, refreshSkills, ua]);
 
+  const saveSettings = useCallback(async () => {
+    if (!ua) return;
+    setSettingsSaving(true);
+    setSettingsError('');
+    try {
+      const payload = { debugMode: settingsDraft.debugMode };
+      if (settingsTouched.openrouterKey) payload.openrouterKey = settingsDraft.openrouterKey;
+      if (settingsTouched.googleKey) payload.googleKey = settingsDraft.googleKey;
+      if (settingsTouched.elevenlabsKey) payload.elevenlabsKey = settingsDraft.elevenlabsKey;
+      if (settingsTouched.elevenlabsVoiceId) payload.elevenlabsVoiceId = settingsDraft.elevenlabsVoiceId;
+      const result = await ua.setSettings(payload);
+      if (result?.settings) {
+        setSettings(result.settings);
+        setSettingsDraft(settingsToDraft(result.settings));
+        setSettingsTouched({});
+      }
+      appendStatus('status', 'Settings saved.');
+      await refreshSkills();
+    } catch (error) {
+      setSettingsError(error.message);
+      appendStatus('error', `Failed to save settings: ${error.message}`);
+    } finally {
+      setSettingsSaving(false);
+    }
+  }, [appendStatus, refreshSkills, settingsDraft, settingsTouched, ua]);
+
+  const deleteSkillFromSettings = useCallback(
+    async (skill) => {
+      if (!ua || !skill) return;
+      const id = `${skill.domain}/${skill.filename}`;
+      setDeletingSkillId(id);
+      try {
+        await ua.deleteSkill(skill.domain, skill.filename);
+        appendStatus('status', `Deleted skill ${skill.name}.`);
+        await refreshSkills();
+      } catch (error) {
+        appendStatus('error', `Delete skill failed: ${error.message}`);
+      } finally {
+        setDeletingSkillId('');
+      }
+    },
+    [appendStatus, refreshSkills, ua]
+  );
+
+  const submitChat = useCallback(async () => {
+    try {
+      setProcessing(true);
+      await processText(chatInput);
+      setChatInput('');
+    } catch (error) {
+      appendStatus('error', `Text command failed: ${error.message}`);
+    } finally {
+      setProcessing(false);
+    }
+  }, [appendStatus, chatInput, processText]);
+
   const modeIndicator = useMemo(
     () =>
       mode === MODES.DEMO
@@ -282,170 +388,250 @@ export default function App() {
     [mode, demoStage, demoAwaitingConfirmation, executionRunning, isDemoRecording]
   );
 
-  return (
-    <main className="mx-auto flex h-screen max-w-xl flex-col gap-3 p-4 text-slate-100">
-      <header className="rounded-xl border border-slate-700 bg-slate-900/70 p-3">
-        <h1 className="text-lg font-semibold">Universal Agent</h1>
-        <p className="text-sm text-slate-300">{modeIndicator}</p>
-        <div className="mt-3 flex gap-2">
-          <button
-            type="button"
-            className={`rounded-md px-3 py-1 text-sm ${
-              mode === MODES.WORK ? 'bg-mint text-slate-950' : 'bg-slate-800 text-slate-200'
-            }`}
-            onClick={() => setMode(MODES.WORK)}
-          >
-            Work
-          </button>
-          <button
-            type="button"
-            className={`rounded-md px-3 py-1 text-sm ${
-              mode === MODES.DEMO ? 'bg-mint text-slate-950' : 'bg-slate-800 text-slate-200'
-            }`}
-            onClick={() => setMode(MODES.DEMO)}
-          >
-            Demo
-          </button>
-        </div>
-      </header>
+  const debugMode = Boolean(settings.debugMode);
+  const chatFeed = statusItems.filter((item) => item.type === 'agent');
+  const showComposer = debugMode || chatComposerOpen;
 
-      {mode === MODES.DEMO ? (
-        <div className="flex flex-col gap-2">
-          {demoStage === DEMO_STAGE.CAPTURE ? (
-            <>
+  return (
+    <main className="app-shell">
+      <div className="app-bg-orb orb-a" />
+      <div className="app-bg-orb orb-b" />
+
+      <section className="app-surface">
+        <div className="window-top-pad drag-region" aria-hidden="true" />
+        <header className="app-header drag-region">
+          <div>
+            <h1>Universal Agent</h1>
+            <p>{modeIndicator}</p>
+          </div>
+          <div className="header-controls no-drag">
+            <div className="glass-pill mode-pill" role="tablist" aria-label="Mode">
               <button
                 type="button"
-                disabled={processing || demoReviewBusy}
-                onClick={() => {
-                  appendStatus(
-                    'status',
-                    isDemoRecording
-                      ? 'Demo narrate button clicked: stopping recording.'
-                      : 'Demo narrate button clicked: starting recording.'
-                  );
-                  if (isDemoRecording) {
-                    setDemoCanFinalize(true);
-                  } else {
-                    setDemoCanFinalize(false);
-                  }
-                  toggleDemoRecording();
-                }}
-                className={`w-full rounded-xl px-4 py-5 text-lg font-semibold transition ${
-                  isDemoRecording
-                    ? 'bg-danger text-white shadow-[0_0_25px_rgba(239,68,68,0.6)]'
-                    : 'bg-mint text-slate-950 hover:bg-emerald-400'
-                } ${processing || demoReviewBusy ? 'cursor-not-allowed opacity-70' : ''}`}
+                className={mode === MODES.WORK ? 'active' : ''}
+                onClick={() => setMode(MODES.WORK)}
               >
-                {isDemoRecording ? 'Stop Recording' : 'Start Recording'}
+                Work
               </button>
-              {demoCanFinalize ? (
-                <button
-                  type="button"
-                  disabled={processing || demoReviewBusy || isDemoRecording}
-                  onClick={finalizeDemoCapture}
-                  className={`w-full rounded-xl border border-slate-600 bg-slate-800 px-4 py-3 text-sm font-semibold text-slate-100 transition hover:bg-slate-700 ${
-                    processing || demoReviewBusy || isDemoRecording ? 'cursor-not-allowed opacity-70' : ''
-                  }`}
-                >
-                  End Demo & Review
-                </button>
-              ) : null}
-            </>
+              <button
+                type="button"
+                className={mode === MODES.DEMO ? 'active' : ''}
+                onClick={() => setMode(MODES.DEMO)}
+              >
+                Demo
+              </button>
+            </div>
+            <button type="button" className="icon-btn" onClick={() => setSettingsOpen(true)} aria-label="Open settings">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M12 8.75A3.25 3.25 0 1 0 12 15.25 3.25 3.25 0 0 0 12 8.75zm9 3.25-.87-.5.08-1a1.1 1.1 0 0 0-.79-1.1l-1-.27-.4-.94a1.1 1.1 0 0 0-1.02-.66h-1.01l-.66-.8a1.1 1.1 0 0 0-1.24-.34l-.97.35-.97-.35a1.1 1.1 0 0 0-1.24.34l-.66.8H7a1.1 1.1 0 0 0-1.02.66l-.4.94-1 .27a1.1 1.1 0 0 0-.79 1.1l.08 1-.87.5a1.1 1.1 0 0 0-.43 1.46l.5.87-.5.87a1.1 1.1 0 0 0 .43 1.46l.87.5-.08 1a1.1 1.1 0 0 0 .79 1.1l1 .27.4.94A1.1 1.1 0 0 0 7 20.5h1.01l.66.8a1.1 1.1 0 0 0 1.24.34l.97-.35.97.35a1.1 1.1 0 0 0 1.24-.34l.66-.8H17a1.1 1.1 0 0 0 1.02-.66l.4-.94 1-.27a1.1 1.1 0 0 0 .79-1.1l-.08-1 .87-.5a1.1 1.1 0 0 0 .43-1.46l-.5-.87.5-.87A1.1 1.1 0 0 0 21 12z"
+                  fill="currentColor"
+                />
+              </svg>
+            </button>
+          </div>
+        </header>
+
+        <div className="controls-wrap">
+          {mode === MODES.DEMO ? (
+            <div className="stack">
+              {demoStage === DEMO_STAGE.CAPTURE ? (
+                <>
+                  <button
+                    type="button"
+                    disabled={processing || demoReviewBusy}
+                    onClick={() => {
+                      appendStatus(
+                        'status',
+                        isDemoRecording
+                          ? 'Demo narrate button clicked: stopping recording.'
+                          : 'Demo narrate button clicked: starting recording.'
+                      );
+                      if (isDemoRecording) {
+                        setDemoCanFinalize(true);
+                      } else {
+                        setDemoCanFinalize(false);
+                      }
+                      toggleDemoRecording();
+                    }}
+                    className={`glass-btn ${isDemoRecording ? 'danger' : 'primary'} ${
+                      processing || demoReviewBusy ? 'disabled' : ''
+                    }`}
+                  >
+                    {isDemoRecording ? 'Stop Recording' : 'Start Recording'}
+                  </button>
+                  {demoCanFinalize ? (
+                    <button
+                      type="button"
+                      disabled={processing || demoReviewBusy || isDemoRecording}
+                      onClick={finalizeDemoCapture}
+                      className={`glass-btn muted ${
+                        processing || demoReviewBusy || isDemoRecording ? 'disabled' : ''
+                      }`}
+                    >
+                      End Demo & Review
+                    </button>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    disabled={processing || demoReviewBusy}
+                    onMouseDown={startDemoReply}
+                    onMouseUp={stopDemoReply}
+                    onMouseLeave={isDemoReplyListening ? stopDemoReply : undefined}
+                    onTouchStart={(event) => {
+                      event.preventDefault();
+                      startDemoReply();
+                    }}
+                    onTouchEnd={(event) => {
+                      event.preventDefault();
+                      stopDemoReply();
+                    }}
+                    className={`glass-btn ${isDemoReplyListening ? 'danger' : 'primary'} ${
+                      processing || demoReviewBusy ? 'disabled' : ''
+                    }`}
+                  >
+                    {isDemoReplyListening ? 'Listening...' : 'Hold to Reply'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={processing || demoReviewBusy || !demoAwaitingConfirmation}
+                    onClick={createSkillFromReview}
+                    className={`glass-btn success ${
+                      processing || demoReviewBusy || !demoAwaitingConfirmation ? 'disabled' : ''
+                    }`}
+                  >
+                    Create Skill
+                  </button>
+                  <button
+                    type="button"
+                    disabled={processing || demoReviewBusy}
+                    onClick={() => {
+                      setDemoStage(DEMO_STAGE.CAPTURE);
+                      setDemoCanFinalize(false);
+                      appendStatus('status', 'Returned to demo capture mode.');
+                    }}
+                    className={`glass-btn muted ${processing || demoReviewBusy ? 'disabled' : ''}`}
+                  >
+                    Resume Capture
+                  </button>
+                </>
+              )}
+            </div>
           ) : (
-            <>
-              <button
-                type="button"
-                disabled={processing || demoReviewBusy}
-                onMouseDown={startDemoReply}
-                onMouseUp={stopDemoReply}
-                onMouseLeave={isDemoReplyListening ? stopDemoReply : undefined}
-                onTouchStart={(event) => {
-                  event.preventDefault();
-                  startDemoReply();
-                }}
-                onTouchEnd={(event) => {
-                  event.preventDefault();
-                  stopDemoReply();
-                }}
-                className={`w-full rounded-xl px-4 py-5 text-lg font-semibold transition ${
-                  isDemoReplyListening
-                    ? 'bg-danger text-white shadow-[0_0_25px_rgba(239,68,68,0.6)]'
-                    : 'bg-mint text-slate-950 hover:bg-emerald-400'
-                } ${processing || demoReviewBusy ? 'cursor-not-allowed opacity-70' : ''}`}
-              >
-                {isDemoReplyListening ? 'Listening...' : 'Hold to Reply'}
-              </button>
-              <button
-                type="button"
-                disabled={processing || demoReviewBusy || !demoAwaitingConfirmation}
-                onClick={createSkillFromReview}
-                className={`w-full rounded-xl border border-emerald-500 bg-emerald-900/30 px-4 py-3 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-900/50 ${
-                  processing || demoReviewBusy || !demoAwaitingConfirmation
-                    ? 'cursor-not-allowed opacity-70'
-                    : ''
-                }`}
-              >
-                Create Skill
-              </button>
-              <button
-                type="button"
-                disabled={processing || demoReviewBusy}
-                onClick={() => {
-                  setDemoStage(DEMO_STAGE.CAPTURE);
-                  setDemoCanFinalize(false);
-                  appendStatus('status', 'Returned to demo capture mode.');
-                }}
-                className={`w-full rounded-xl border border-slate-600 bg-slate-800 px-4 py-3 text-sm font-semibold text-slate-100 transition hover:bg-slate-700 ${
-                  processing || demoReviewBusy ? 'cursor-not-allowed opacity-70' : ''
-                }`}
-              >
-                Resume Capture
-              </button>
-            </>
+            <button
+              type="button"
+              disabled={processing}
+              onMouseDown={() => {
+                appendStatus('status', 'Work speak button pressed: recording started.');
+                startListening();
+              }}
+              onMouseUp={() => {
+                appendStatus('status', 'Work speak button released: recording stopped.');
+                stopListening();
+              }}
+              onMouseLeave={
+                isListening
+                  ? () => {
+                      stopListening();
+                    }
+                  : undefined
+              }
+              onTouchStart={(event) => {
+                event.preventDefault();
+                appendStatus('status', 'Work speak button touched: recording started.');
+                startListening();
+              }}
+              onTouchEnd={(event) => {
+                event.preventDefault();
+                appendStatus('status', 'Work speak touch ended: recording stopped.');
+                stopListening();
+              }}
+              className={`glass-btn ${isListening ? 'danger' : 'primary'} ${processing ? 'disabled' : ''}`}
+            >
+              {isListening ? 'Listening...' : 'Hold to Speak'}
+            </button>
           )}
         </div>
-      ) : (
-        <button
-          type="button"
-          disabled={processing}
-          onMouseDown={() => {
-            appendStatus('status', 'Work speak button pressed: recording started.');
-            startListening();
-          }}
-          onMouseUp={() => {
-            appendStatus('status', 'Work speak button released: recording stopped.');
-            stopListening();
-          }}
-          onMouseLeave={
-            isListening
-              ? () => {
-                  stopListening();
-                }
-              : undefined
-          }
-          onTouchStart={(event) => {
-            event.preventDefault();
-            appendStatus('status', 'Work speak button touched: recording started.');
-            startListening();
-          }}
-          onTouchEnd={(event) => {
-            event.preventDefault();
-            appendStatus('status', 'Work speak touch ended: recording stopped.');
-            stopListening();
-          }}
-          className={`w-full rounded-xl px-4 py-5 text-lg font-semibold transition ${
-            isListening
-              ? 'bg-danger text-white shadow-[0_0_25px_rgba(239,68,68,0.6)]'
-              : 'bg-mint text-slate-950 hover:bg-emerald-400'
-          } ${processing ? 'cursor-not-allowed opacity-70' : ''}`}
-        >
-          {isListening ? 'Listening...' : 'Hold to Speak'}
-        </button>
-      )}
 
-      <StatusFeed items={statusItems} />
-      <SkillLog skills={skills.slice(-8).reverse()} />
-      <SettingsPanel settings={settings} />
+        <section
+          className="glass-inset chat-panel"
+          onClick={() => setChatComposerOpen(true)}
+          onFocus={() => setChatComposerOpen(true)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') setChatComposerOpen(true);
+          }}
+        >
+          <div className="chat-log">
+            {chatFeed.length === 0 ? <p className="muted-text">Agent responses will appear here.</p> : null}
+            {chatFeed.map((item) => (
+              <article key={item.id} className="chat-bubble">
+                <p>{item.message}</p>
+              </article>
+            ))}
+          </div>
+          {showComposer ? (
+            <div className="chat-composer" onClick={(event) => event.stopPropagation()}>
+              <input
+                className="glass-input"
+                value={chatInput}
+                onChange={(event) => setChatInput(event.target.value)}
+                placeholder={mode === MODES.WORK ? 'Type a task...' : 'Switch to Work mode for text commands'}
+                disabled={processing || mode !== MODES.WORK}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    submitChat();
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="glass-btn small primary"
+                onClick={submitChat}
+                disabled={processing || mode !== MODES.WORK || !chatInput.trim()}
+              >
+                Send
+              </button>
+            </div>
+          ) : (
+            <p className="hint-text">Click to type</p>
+          )}
+        </section>
+
+        {debugMode ? (
+          <div className="debug-grid">
+            <StatusFeed items={statusItems} />
+            <SkillLog skills={skills.slice(-8).reverse()} />
+          </div>
+        ) : null}
+      </section>
+
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => {
+          setSettingsOpen(false);
+          setSettingsError('');
+          setSettingsDraft(settingsToDraft(settings));
+          setSettingsTouched({});
+        }}
+        settings={settings}
+        skills={skills.slice().reverse()}
+        draft={settingsDraft}
+        onDraftChange={(field, value) => {
+          setSettingsDraft((prev) => ({ ...prev, [field]: value }));
+          setSettingsTouched((prev) => ({ ...prev, [field]: true }));
+        }}
+        onSave={saveSettings}
+        saving={settingsSaving}
+        saveError={settingsError}
+        onDeleteSkill={deleteSkillFromSettings}
+        deletingSkillId={deletingSkillId}
+      />
     </main>
   );
 }

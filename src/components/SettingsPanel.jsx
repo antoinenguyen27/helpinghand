@@ -1,27 +1,141 @@
-function Indicator({ label, active }) {
-  return (
-    <div className="flex items-center justify-between rounded-md bg-slate-800 px-2 py-1">
-      <span className="text-xs text-slate-300">{label}</span>
-      <span className={`text-xs font-semibold ${active ? 'text-mint' : 'text-amber'}`}>
-        {active ? 'set' : 'missing'}
-      </span>
-    </div>
-  );
-}
+export default function SettingsPanel({
+  open,
+  onClose,
+  settings,
+  skills,
+  draft,
+  onDraftChange,
+  onSave,
+  saving,
+  saveError,
+  onDeleteSkill,
+  deletingSkillId
+}) {
+  if (!open) return null;
 
-export default function SettingsPanel({ settings }) {
+  const missing = settings?.missingRequiredKeys || [];
+  const requiredReady = missing.length === 0;
+  const skillList = skills || [];
+
   return (
-    <div className="rounded-xl border border-slate-700 bg-slate-900/70 p-3">
-      <h3 className="mb-2 text-sm font-semibold text-slate-200">Settings</h3>
-      <div className="grid grid-cols-2 gap-2">
-        <Indicator label="OpenRouter" active={Boolean(settings.openrouterKey)} />
-        <Indicator label="Google GenAI" active={Boolean(settings.googleKey)} />
-        <Indicator label="ElevenLabs" active={Boolean(settings.elevenlabsKey)} />
-        <Indicator label="Voice ID" active={Boolean(settings.elevenlabsVoiceId)} />
-      </div>
-      <div className="mt-2 text-xs text-slate-400">
-        <p>Execution: {settings.executionModel || 'google/gemini-3-flash-preview'}</p>
-        <p className="mt-2">Orchestrator: {settings.orchestratorModel || 'google/gemini-3-flash-preview'}</p>
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="glass-modal modal-panel" onClick={(event) => event.stopPropagation()}>
+        <div className="panel-head">
+          <h3>Settings</h3>
+          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close settings">
+            ×
+          </button>
+        </div>
+
+        <p className={`status-pill ${requiredReady ? 'status-ok' : 'status-warning'}`}>
+          {requiredReady
+            ? 'Runtime ready'
+            : `Missing required keys: ${missing.join(', ')}`}
+        </p>
+
+        <div className="field-grid">
+          <label className="field-block">
+            <span>OpenRouter API Key</span>
+            <input
+              className="glass-input"
+              type="password"
+              autoComplete="off"
+              value={draft.openrouterKey}
+              onChange={(event) => onDraftChange('openrouterKey', event.target.value)}
+              placeholder={settings.openrouterConfigured ? 'Configured' : 'Enter key'}
+            />
+          </label>
+          <label className="field-block">
+            <span>Google GenAI API Key</span>
+            <input
+              className="glass-input"
+              type="password"
+              autoComplete="off"
+              value={draft.googleKey}
+              onChange={(event) => onDraftChange('googleKey', event.target.value)}
+              placeholder={settings.googleConfigured ? 'Configured' : 'Enter key'}
+            />
+          </label>
+          <label className="field-block">
+            <span>ElevenLabs API Key (optional)</span>
+            <input
+              className="glass-input"
+              type="password"
+              autoComplete="off"
+              value={draft.elevenlabsKey}
+              onChange={(event) => onDraftChange('elevenlabsKey', event.target.value)}
+              placeholder={settings.elevenlabsConfigured ? 'Configured' : 'Optional'}
+            />
+          </label>
+          <label className="field-block">
+            <span>ElevenLabs Voice ID (optional)</span>
+            <input
+              className="glass-input"
+              type="text"
+              autoComplete="off"
+              value={draft.elevenlabsVoiceId}
+              onChange={(event) => onDraftChange('elevenlabsVoiceId', event.target.value)}
+              placeholder={settings.elevenlabsVoiceConfigured ? 'Configured' : 'Optional'}
+            />
+          </label>
+        </div>
+
+        <label className="toggle-row">
+          <span>Debug Mode</span>
+          <button
+            type="button"
+            className={`glass-toggle ${draft.debugMode ? 'enabled' : ''}`}
+            onClick={() => onDraftChange('debugMode', !draft.debugMode)}
+            aria-pressed={draft.debugMode}
+          >
+            <span className="glass-toggle-thumb" />
+          </button>
+        </label>
+
+        <div className="settings-meta">
+          <p>Execution: {settings.executionModel || 'google/gemini-3-flash-preview'}</p>
+          <p>Orchestrator: {settings.orchestratorModel || 'google/gemini-3-flash-preview'}</p>
+          <p>Demo: {settings.demoModel || 'google/gemini-2.5-flash'}</p>
+        </div>
+
+        <div className="actions-row">
+          <button type="button" className="glass-btn muted" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" className="glass-btn primary" disabled={saving} onClick={onSave}>
+            {saving ? 'Saving...' : 'Save Settings'}
+          </button>
+        </div>
+        {saveError ? <p className="error-line">{saveError}</p> : null}
+
+        <div className="skills-panel glass-inset">
+          <div className="panel-head">
+            <h4>Skills</h4>
+            <span>{skillList.length}</span>
+          </div>
+          <ul className="skills-list">
+            {skillList.length === 0 ? <li className="muted-text">No saved skills yet.</li> : null}
+            {skillList.map((skill) => {
+              const id = `${skill.domain}/${skill.filename}`;
+              return (
+                <li key={id} className="skill-row">
+                  <div>
+                    <p>{skill.name}</p>
+                    <small>{skill.domain}</small>
+                  </div>
+                  <button
+                    type="button"
+                    className="glass-btn danger small"
+                    disabled={deletingSkillId === id}
+                    onClick={() => onDeleteSkill(skill)}
+                  >
+                    {deletingSkillId === id ? 'Deleting...' : 'Delete'}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       </div>
     </div>
   );

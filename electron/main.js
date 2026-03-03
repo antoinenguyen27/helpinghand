@@ -5,6 +5,7 @@ import { app, BrowserWindow, ipcMain, session } from 'electron';
 import ipcChannelsModule from './ipc-channels.cjs';
 import { registerMainWindow, pushStatus } from './status-bus.js';
 import { closeStagehand, getPage } from './stagehand-manager.js';
+import { getRuntimeSettings, persistEnvPatch } from './env-settings.js';
 import { transcribeAudio } from '../voice/transcription.js';
 import { speak } from '../voice/tts.js';
 import { runOrchestratorTurn, interruptCurrentTask, resetOrchestratorState } from '../agent/orchestrator.js';
@@ -16,7 +17,7 @@ import {
   saveDraftFromReview
 } from '../agent/demo-agent.js';
 import { clearSessionMemory } from '../memory/session-memory.js';
-import { loadAllSkills } from '../skills/skill-store.js';
+import { deleteSkill, loadAllSkills } from '../skills/skill-store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const { IPC_CHANNELS } = ipcChannelsModule;
@@ -24,7 +25,6 @@ const EXECUTION_MODEL = 'google/gemini-3-flash-preview';
 const REQUIRED_ENV_VARS = ['OPENROUTER_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY'];
 
 let mainWindow = null;
-let startupBlocked = false;
 const runtimeSettings = {
   orchestratorModel: process.env.ORCHESTRATOR_MODEL || 'google/gemini-3-flash-preview',
   demoModel: process.env.DEMO_MODEL || 'google/gemini-2.5-flash'
@@ -39,8 +39,8 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 440,
     height: 760,
-    minWidth: 400,
-    minHeight: 640,
+    minWidth: 340,
+    minHeight: 544,
     show: false,
     title: 'Universal Agent',
     titleBarStyle: 'hiddenInset',
@@ -113,17 +113,50 @@ function hardenSessionSecurity() {
   });
 }
 
-function startupValidationError() {
-  const missing = REQUIRED_ENV_VARS.filter((key) => !process.env[key]);
-  if (!missing.length) return null;
-  return `Startup blocked: missing required environment variable(s): ${missing.join(', ')}.`;
+function getMissingRequiredKeys() {
+  return REQUIRED_ENV_VARS.filter((key) => !process.env[key]);
 }
 
-function assertStartupReady() {
-  if (!startupBlocked) return;
-  throw new Error(
-    'Agent startup is blocked due to missing required keys. Set OPENROUTER_API_KEY and GOOGLE_GENERATIVE_AI_API_KEY, then restart.'
-  );
+function settingsPayload() {
+  const runtime = getRuntimeSettings();
+  return {
+    openrouterKey: runtime.openrouterConfigured ? 'configured' : '',
+    googleKey: runtime.googleConfigured ? 'configured' : '',
+    elevenlabsKey: runtime.elevenlabsConfigured ? 'configured' : '',
+    elevenlabsVoiceId: runtime.elevenlabsVoiceConfigured ? 'configured' : '',
+    openrouterConfigured: runtime.openrouterConfigured,
+    googleConfigured: runtime.googleConfigured,
+    elevenlabsConfigured: runtime.elevenlabsConfigured,
+    elevenlabsVoiceConfigured: runtime.elevenlabsVoiceConfigured,
+    debugMode: runtime.debugMode,
+    missingRequiredKeys: getMissingRequiredKeys(),
+    executionModel: EXECUTION_MODEL,
+    orchestratorModel: runtimeSettings.orchestratorModel,
+    demoModel: runtimeSettings.demoModel
+  };
+}
+
+function assertRuntimeReady(actionLabel) {
+  const missing = getMissingRequiredKeys();
+  if (!missing.length) return;
+  throw new Error(`${actionLabel} unavailable: missing required key(s): ${missing.join(', ')}.`);
+}
+
+async function processWorkInput(userInput, source) {
+  assertRuntimeReady('Work mode');
+  pushStatus(`Routing ${source} input to work orchestrator.`, 'status');
+  const result = await runOrchestratorTurn(userInput);
+  pushStatus('Work agent response generated.', 'api');
+  const speech = result.response ? await speak(result.response) : null;
+  if (speech?.source) {
+    pushStatus(`TTS finished (source=${speech.source}).`, 'api');
+  }
+
+  return {
+    response: result.response || null,
+    ttsAudioBase64: speech?.audioBase64 || null,
+    ttsMimeType: speech?.mimeType || null
+  };
 }
 
 app.whenReady().then(async () => {
@@ -131,11 +164,16 @@ app.whenReady().then(async () => {
 
   hardenSessionSecurity();
   createWindow();
-  const validationError = startupValidationError();
-  startupBlocked = Boolean(validationError);
-  if (validationError) {
-    setTimeout(() => pushStatus(validationError, 'error'), 1200);
-    return;
+  const missing = getMissingRequiredKeys();
+  if (missing.length) {
+    setTimeout(
+      () =>
+        pushStatus(
+          `Startup warning: missing required environment variable(s): ${missing.join(', ')}. Configure keys in Settings.`,
+          'warning'
+        ),
+      1200
+    );
   }
 
   pushStatus('Universal Agent ready.');
@@ -163,7 +201,6 @@ app.on('before-quit', async () => {
 });
 
 ipcMain.handle(IPC_CHANNELS.VOICE_PROCESS, async (_event, payload) => {
-  assertStartupReady();
   const { audioBase64, mode, audioFormat, demoStage } = payload || {};
   let transcript = '';
 
@@ -174,6 +211,8 @@ ipcMain.handle(IPC_CHANNELS.VOICE_PROCESS, async (_event, payload) => {
       pushStatus('Voice process routing to interrupt handler.', 'status');
       return interruptCurrentTask();
     }
+
+    assertRuntimeReady(mode === 'demo' ? 'Demo mode' : 'Work mode');
 
     if (mode === 'demo') {
       const page = await getPage().catch(() => null);
@@ -212,19 +251,9 @@ ipcMain.handle(IPC_CHANNELS.VOICE_PROCESS, async (_event, payload) => {
       };
     }
 
-    pushStatus('Routing transcript to work orchestrator.', 'status');
-    const result = await runOrchestratorTurn(transcript);
-    pushStatus('Work agent response generated.', 'api');
-    const speech = result.response ? await speak(result.response) : null;
-    if (speech?.source) {
-      pushStatus(`TTS finished (source=${speech.source}).`, 'api');
-    }
-
     return {
       transcript,
-      response: result.response || null,
-      ttsAudioBase64: speech?.audioBase64 || null,
-      ttsMimeType: speech?.mimeType || null
+      ...(await processWorkInput(transcript, 'voice'))
     };
   } catch (error) {
     pushStatus(`Error: ${error.message}`, 'error');
@@ -238,22 +267,49 @@ ipcMain.handle(IPC_CHANNELS.VOICE_PROCESS, async (_event, payload) => {
   }
 });
 
+ipcMain.handle(IPC_CHANNELS.WORK_TEXT_PROCESS, async (_event, payload) => {
+  const text = String(payload?.text || '').trim();
+  const mode = payload?.mode || 'work';
+  if (!text) return { response: null, ttsAudioBase64: null, ttsMimeType: null };
+  if (mode !== 'work') {
+    return {
+      response: 'Text input is currently supported in Work mode only.',
+      ttsAudioBase64: null,
+      ttsMimeType: null,
+      error: true
+    };
+  }
+
+  try {
+    assertRuntimeReady('Work mode');
+    pushStatus(`Text process invoked (mode=${mode}).`, 'status');
+    return await processWorkInput(text, 'text');
+  } catch (error) {
+    pushStatus(`Error: ${error.message}`, 'error');
+    return {
+      response: `Error: ${error.message}`,
+      ttsAudioBase64: null,
+      ttsMimeType: null,
+      error: true
+    };
+  }
+});
+
 ipcMain.handle(IPC_CHANNELS.DEMO_START, async () => {
-  assertStartupReady();
+  assertRuntimeReady('Demo mode');
   pushStatus('Demo start requested from renderer.', 'status');
   await startDemoSession();
   return { ok: true };
 });
 
 ipcMain.handle(IPC_CHANNELS.DEMO_END, async () => {
-  assertStartupReady();
   pushStatus('Demo end requested from renderer.', 'status');
   const summary = await endDemoSession();
   return { ok: true, summary };
 });
 
 ipcMain.handle(IPC_CHANNELS.DEMO_FINALIZE, async () => {
-  assertStartupReady();
+  assertRuntimeReady('Demo mode');
   pushStatus('Demo finalize requested from renderer.', 'status');
   const page = await getPage().catch(() => null);
   const url = typeof page?.url === 'function' ? page.url() : '';
@@ -271,7 +327,7 @@ ipcMain.handle(IPC_CHANNELS.DEMO_FINALIZE, async () => {
 });
 
 ipcMain.handle(IPC_CHANNELS.DEMO_SAVE, async () => {
-  assertStartupReady();
+  assertRuntimeReady('Demo mode');
   pushStatus('Demo save requested from renderer.', 'status');
   const result = await saveDraftFromReview();
   const speech = result.agentMessage ? await speak(result.agentMessage) : null;
@@ -286,7 +342,7 @@ ipcMain.handle(IPC_CHANNELS.DEMO_SAVE, async () => {
 });
 
 ipcMain.handle(IPC_CHANNELS.WORK_STOP, async () => {
-  assertStartupReady();
+  assertRuntimeReady('Work mode');
   pushStatus('Work stop requested from renderer.', 'status');
   await interruptCurrentTask();
   clearSessionMemory();
@@ -295,24 +351,34 @@ ipcMain.handle(IPC_CHANNELS.WORK_STOP, async () => {
 });
 
 ipcMain.handle(IPC_CHANNELS.EXEC_INTERRUPT, async () => {
-  assertStartupReady();
+  assertRuntimeReady('Work mode');
   return interruptCurrentTask();
 });
 
 ipcMain.handle(IPC_CHANNELS.SETTINGS_GET, async () => {
-  const mask = (value) => (value ? '********' : '');
-  return {
-    openrouterKey: mask(process.env.OPENROUTER_API_KEY),
-    googleKey: mask(process.env.GOOGLE_GENERATIVE_AI_API_KEY),
-    elevenlabsKey: mask(process.env.ELEVENLABS_API_KEY),
-    elevenlabsVoiceId: process.env.ELEVENLABS_VOICE_ID ? 'configured' : '',
-    executionModel: EXECUTION_MODEL,
-    orchestratorModel: runtimeSettings.orchestratorModel,
-    demoModel: runtimeSettings.demoModel
-  };
+  return settingsPayload();
 });
 
 ipcMain.handle(IPC_CHANNELS.SETTINGS_SET, async (_event, patch) => {
+  const envPatch = {};
+  if (Object.prototype.hasOwnProperty.call(patch || {}, 'openrouterKey')) {
+    envPatch.OPENROUTER_API_KEY = String(patch.openrouterKey ?? '');
+  }
+  if (Object.prototype.hasOwnProperty.call(patch || {}, 'googleKey')) {
+    envPatch.GOOGLE_GENERATIVE_AI_API_KEY = String(patch.googleKey ?? '');
+  }
+  if (Object.prototype.hasOwnProperty.call(patch || {}, 'elevenlabsKey')) {
+    envPatch.ELEVENLABS_API_KEY = String(patch.elevenlabsKey ?? '');
+  }
+  if (Object.prototype.hasOwnProperty.call(patch || {}, 'elevenlabsVoiceId')) {
+    envPatch.ELEVENLABS_VOICE_ID = String(patch.elevenlabsVoiceId ?? '');
+  }
+  if (Object.prototype.hasOwnProperty.call(patch || {}, 'debugMode')) {
+    envPatch.DEBUG_MODE = Boolean(patch.debugMode);
+  }
+  if (Object.keys(envPatch).length) {
+    await persistEnvPatch(envPatch);
+  }
   if (typeof patch?.orchestratorModel === 'string' && patch.orchestratorModel.trim()) {
     runtimeSettings.orchestratorModel = patch.orchestratorModel.trim();
     process.env.ORCHESTRATOR_MODEL = runtimeSettings.orchestratorModel;
@@ -321,10 +387,16 @@ ipcMain.handle(IPC_CHANNELS.SETTINGS_SET, async (_event, patch) => {
     runtimeSettings.demoModel = patch.demoModel.trim();
     process.env.DEMO_MODEL = runtimeSettings.demoModel;
   }
-  return { ok: true, settings: runtimeSettings };
+  return { ok: true, settings: settingsPayload() };
 });
 
 ipcMain.handle(IPC_CHANNELS.SKILLS_LIST, async () => {
   const skills = await loadAllSkills();
   return { skills };
+});
+
+ipcMain.handle(IPC_CHANNELS.SKILLS_DELETE, async (_event, payload) => {
+  await deleteSkill(payload || {});
+  const skills = await loadAllSkills();
+  return { ok: true, skills };
 });
