@@ -8,9 +8,9 @@ const IPC_CHANNELS = {
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',
   SKILLS_LIST: 'skills:list',
-  CUA_INTERRUPT: 'cua:interrupt',
+  EXEC_INTERRUPT: 'exec:interrupt',
   STATUS_UPDATE: 'status:update',
-  CUA_STATE: 'cua:state'
+  EXEC_STATE: 'exec:state'
 };
 
 module.exports = { IPC_CHANNELS };

@@ -17,7 +17,7 @@ export function pushStatus(message, type = 'status') {
   });
 }
 
-export function pushCUAState(running) {
+export function pushExecutionState(running) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.CUA_STATE, { running, timestamp: Date.now() });
+  mainWindow.webContents.send(IPC_CHANNELS.EXEC_STATE, { running, timestamp: Date.now() });
 }

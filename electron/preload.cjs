@@ -10,9 +10,9 @@ const IPC_CHANNELS = {
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',
   SKILLS_LIST: 'skills:list',
-  CUA_INTERRUPT: 'cua:interrupt',
+  EXEC_INTERRUPT: 'exec:interrupt',
   STATUS_UPDATE: 'status:update',
-  CUA_STATE: 'cua:state'
+  EXEC_STATE: 'exec:state'
 };
 
 contextBridge.exposeInMainWorld('ua', {
@@ -26,15 +26,15 @@ contextBridge.exposeInMainWorld('ua', {
   getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET),
   setSettings: (patch) => ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_SET, patch),
   listSkills: () => ipcRenderer.invoke(IPC_CHANNELS.SKILLS_LIST),
-  interruptCUA: () => ipcRenderer.invoke(IPC_CHANNELS.CUA_INTERRUPT),
+  interruptExecution: () => ipcRenderer.invoke(IPC_CHANNELS.EXEC_INTERRUPT),
   onStatus: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on(IPC_CHANNELS.STATUS_UPDATE, listener);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.STATUS_UPDATE, listener);
   },
-  onCUAState: (callback) => {
+  onExecutionState: (callback) => {
     const listener = (_event, payload) => callback(payload);
-    ipcRenderer.on(IPC_CHANNELS.CUA_STATE, listener);
-    return () => ipcRenderer.removeListener(IPC_CHANNELS.CUA_STATE, listener);
+    ipcRenderer.on(IPC_CHANNELS.EXEC_STATE, listener);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.EXEC_STATE, listener);
   }
 });

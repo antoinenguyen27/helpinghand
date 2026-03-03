@@ -20,10 +20,12 @@ import { loadAllSkills } from '../skills/skill-store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const { IPC_CHANNELS } = ipcChannelsModule;
+const EXECUTION_MODEL = 'google/gemini-3-flash-preview';
+const REQUIRED_ENV_VARS = ['OPENROUTER_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY'];
 
 let mainWindow = null;
+let startupBlocked = false;
 const runtimeSettings = {
-  cuaModel: process.env.CUA_MODEL || 'google/gemini-2.5-flash',
   orchestratorModel: process.env.ORCHESTRATOR_MODEL || 'google/gemini-3-flash-preview',
   demoModel: process.env.DEMO_MODEL || 'google/gemini-2.5-flash'
 };
@@ -111,11 +113,30 @@ function hardenSessionSecurity() {
   });
 }
 
+function startupValidationError() {
+  const missing = REQUIRED_ENV_VARS.filter((key) => !process.env[key]);
+  if (!missing.length) return null;
+  return `Startup blocked: missing required environment variable(s): ${missing.join(', ')}.`;
+}
+
+function assertStartupReady() {
+  if (!startupBlocked) return;
+  throw new Error(
+    'Agent startup is blocked due to missing required keys. Set OPENROUTER_API_KEY and GOOGLE_GENERATIVE_AI_API_KEY, then restart.'
+  );
+}
+
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return;
 
   hardenSessionSecurity();
   createWindow();
+  const validationError = startupValidationError();
+  startupBlocked = Boolean(validationError);
+  if (validationError) {
+    setTimeout(() => pushStatus(validationError, 'error'), 1200);
+    return;
+  }
 
   pushStatus('Universal Agent ready.');
 });
@@ -142,6 +163,7 @@ app.on('before-quit', async () => {
 });
 
 ipcMain.handle(IPC_CHANNELS.VOICE_PROCESS, async (_event, payload) => {
+  assertStartupReady();
   const { audioBase64, mode, audioFormat, demoStage } = payload || {};
   let transcript = '';
 
@@ -217,18 +239,21 @@ ipcMain.handle(IPC_CHANNELS.VOICE_PROCESS, async (_event, payload) => {
 });
 
 ipcMain.handle(IPC_CHANNELS.DEMO_START, async () => {
+  assertStartupReady();
   pushStatus('Demo start requested from renderer.', 'status');
   await startDemoSession();
   return { ok: true };
 });
 
 ipcMain.handle(IPC_CHANNELS.DEMO_END, async () => {
+  assertStartupReady();
   pushStatus('Demo end requested from renderer.', 'status');
   const summary = await endDemoSession();
   return { ok: true, summary };
 });
 
 ipcMain.handle(IPC_CHANNELS.DEMO_FINALIZE, async () => {
+  assertStartupReady();
   pushStatus('Demo finalize requested from renderer.', 'status');
   const page = await getPage().catch(() => null);
   const url = typeof page?.url === 'function' ? page.url() : '';
@@ -246,6 +271,7 @@ ipcMain.handle(IPC_CHANNELS.DEMO_FINALIZE, async () => {
 });
 
 ipcMain.handle(IPC_CHANNELS.DEMO_SAVE, async () => {
+  assertStartupReady();
   pushStatus('Demo save requested from renderer.', 'status');
   const result = await saveDraftFromReview();
   const speech = result.agentMessage ? await speak(result.agentMessage) : null;
@@ -260,6 +286,7 @@ ipcMain.handle(IPC_CHANNELS.DEMO_SAVE, async () => {
 });
 
 ipcMain.handle(IPC_CHANNELS.WORK_STOP, async () => {
+  assertStartupReady();
   pushStatus('Work stop requested from renderer.', 'status');
   await interruptCurrentTask();
   clearSessionMemory();
@@ -267,7 +294,8 @@ ipcMain.handle(IPC_CHANNELS.WORK_STOP, async () => {
   return { ok: true };
 });
 
-ipcMain.handle(IPC_CHANNELS.CUA_INTERRUPT, async () => {
+ipcMain.handle(IPC_CHANNELS.EXEC_INTERRUPT, async () => {
+  assertStartupReady();
   return interruptCurrentTask();
 });
 
@@ -275,19 +303,16 @@ ipcMain.handle(IPC_CHANNELS.SETTINGS_GET, async () => {
   const mask = (value) => (value ? '********' : '');
   return {
     openrouterKey: mask(process.env.OPENROUTER_API_KEY),
+    googleKey: mask(process.env.GOOGLE_GENERATIVE_AI_API_KEY),
     elevenlabsKey: mask(process.env.ELEVENLABS_API_KEY),
     elevenlabsVoiceId: process.env.ELEVENLABS_VOICE_ID ? 'configured' : '',
-    cuaModel: runtimeSettings.cuaModel,
+    executionModel: EXECUTION_MODEL,
     orchestratorModel: runtimeSettings.orchestratorModel,
     demoModel: runtimeSettings.demoModel
   };
 });
 
 ipcMain.handle(IPC_CHANNELS.SETTINGS_SET, async (_event, patch) => {
-  if (typeof patch?.cuaModel === 'string' && patch.cuaModel.trim()) {
-    runtimeSettings.cuaModel = patch.cuaModel.trim();
-    process.env.CUA_MODEL = runtimeSettings.cuaModel;
-  }
   if (typeof patch?.orchestratorModel === 'string' && patch.orchestratorModel.trim()) {
     runtimeSettings.orchestratorModel = patch.orchestratorModel.trim();
     process.env.ORCHESTRATOR_MODEL = runtimeSettings.orchestratorModel;

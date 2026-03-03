@@ -67,11 +67,11 @@ Use tools intentionally:
 - observe_page(reason): inspect visible interactive elements before uncertain actions.
 - read_session_memory(limit): retrieve recent turn outcomes.
 - navigate(url): navigate to needed pages.
-- cua_execute(taskDescription, cuaInstruction, taskScope): execute browser work.
+- browser_execute(taskDescription, instruction, taskScope): execute browser work.
 
 Rules:
 - Keep replies short and spoken-friendly.
-- Use cua_execute only when instruction is concrete.
+- Use browser_execute only when instruction is concrete.
 - Never execute irreversible actions (send/delete/publish/payment/purchase/checkout) unless user confirmed.
 - If a tool reports auth/security blocker, explain blocker and ask user to unblock in Chrome.
 - If a tool fails twice, report blocker and ask one concrete follow-up.
@@ -111,8 +111,8 @@ async function agentPlan(state) {
             content: 'Executing confirmed action.',
             tool_calls: [
               {
-                id: `cua_confirm_${Date.now()}`,
-                name: 'cua_execute',
+                id: `execution_confirm_${Date.now()}`,
+                name: 'browser_execute',
                 args: pending,
                 type: 'tool_call'
               }
@@ -171,12 +171,12 @@ async function agentPlan(state) {
 async function safetyGate(state) {
   const lastAi = latestMessageOfType(state.messages || [], (msg) => msg instanceof AIMessage);
   const toolCall = Array.isArray(lastAi?.tool_calls)
-    ? lastAi.tool_calls.find((call) => call?.name === 'cua_execute')
+    ? lastAi.tool_calls.find((call) => call?.name === 'browser_execute')
     : null;
   if (!toolCall) return {};
 
   const args = toolCall.args || {};
-  const instructionText = `${args.taskDescription || ''} ${args.cuaInstruction || ''}`;
+  const instructionText = `${args.taskDescription || ''} ${args.instruction || ''}`;
   trace('safety_gate.inspect', { toolCall, instructionText });
   if (!isIrreversible(instructionText)) return {};
 
@@ -187,7 +187,7 @@ async function safetyGate(state) {
     awaitingConfirmation: true,
     pendingExecution: {
       taskDescription: args.taskDescription || 'Confirmed action',
-      cuaInstruction: args.cuaInstruction || args.taskDescription || '',
+      instruction: args.instruction || args.taskDescription || '',
       taskScope: args.taskScope || 'short'
     },
     finalResponse: confirmationPrompt
@@ -225,11 +225,11 @@ function routeAfterPlan(state) {
   const toolCalls = Array.isArray(lastAi?.tool_calls) ? lastAi.tool_calls : [];
   if (!toolCalls.length) return 'respond';
 
-  const cuaCall = toolCalls.find((call) => call?.name === 'cua_execute');
-  if (!cuaCall) return 'tool_exec';
+  const browserCall = toolCalls.find((call) => call?.name === 'browser_execute');
+  if (!browserCall) return 'tool_exec';
 
-  const args = cuaCall.args || {};
-  const instructionText = `${args.taskDescription || ''} ${args.cuaInstruction || ''}`;
+  const args = browserCall.args || {};
+  const instructionText = `${args.taskDescription || ''} ${args.instruction || ''}`;
   if (isIrreversible(instructionText)) {
     trace('route_after_plan', { route: 'safety_gate', instructionText });
     return 'safety_gate';

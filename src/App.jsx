@@ -40,7 +40,7 @@ export default function App() {
   const [skills, setSkills] = useState([]);
   const [settings, setSettings] = useState({});
   const [processing, setProcessing] = useState(false);
-  const [cuaRunning, setCUARunning] = useState(false);
+  const [executionRunning, setExecutionRunning] = useState(false);
   const [demoStage, setDemoStage] = useState(DEMO_STAGE.CAPTURE);
   const [demoAwaitingConfirmation, setDemoAwaitingConfirmation] = useState(false);
   const [demoReviewBusy, setDemoReviewBusy] = useState(false);
@@ -64,16 +64,6 @@ export default function App() {
     const next = await ua.getSettings();
     setSettings(next);
   }, [ua]);
-
-  const updateSettings = useCallback(
-    async (patch) => {
-      if (!ua) return;
-      await ua.setSettings(patch);
-      await refreshSettings();
-      appendStatus('status', 'Settings updated.');
-    },
-    [appendStatus, refreshSettings, ua]
-  );
 
   const processSegment = useCallback(
     async (audioBase64, segmentMode, audioFormat = 'webm', demoStageContext = null) => {
@@ -145,11 +135,11 @@ export default function App() {
     });
 
   const { isListening, startListening, stopListening } = useWorkRecorder({
-    enableStopWordDetection: cuaRunning,
+    enableStopWordDetection: executionRunning,
     onLog: (message, type = 'status') => appendStatus(type, message),
     onInterrupt: async () => {
-      appendStatus('interrupt', 'Stop word detected. Interrupting current CUA task.');
-      if (ua) await ua.interruptCUA();
+      appendStatus('interrupt', 'Stop word detected. Interrupting current execution task.');
+      if (ua) await ua.interruptExecution();
     },
     onRecording: async (audioBase64, audioFormat) => {
       try {
@@ -180,13 +170,13 @@ export default function App() {
       appendStatus(payload.type || 'status', payload.message);
     });
 
-    const unsubscribeCUA = ua.onCUAState((payload) => {
-      setCUARunning(Boolean(payload.running));
+    const unsubscribeExecution = ua.onExecutionState((payload) => {
+      setExecutionRunning(Boolean(payload.running));
     });
 
     return () => {
       unsubscribeStatus?.();
-      unsubscribeCUA?.();
+      unsubscribeExecution?.();
     };
   }, [appendStatus, refreshSettings, refreshSkills, ua]);
 
@@ -286,10 +276,10 @@ export default function App() {
           : demoAwaitingConfirmation
             ? 'Demo Review: ready to create skill or apply corrections'
             : 'Demo Review: answer clarifying questions'
-        : cuaRunning
+        : executionRunning
           ? 'Work Mode: task running (say stop/pause to interrupt)'
           : 'Work Mode: hold to speak command',
-    [mode, demoStage, demoAwaitingConfirmation, cuaRunning, isDemoRecording]
+    [mode, demoStage, demoAwaitingConfirmation, executionRunning, isDemoRecording]
   );
 
   return (
@@ -455,7 +445,7 @@ export default function App() {
 
       <StatusFeed items={statusItems} />
       <SkillLog skills={skills.slice(-8).reverse()} />
-      <SettingsPanel settings={settings} onChangeModel={updateSettings} />
+      <SettingsPanel settings={settings} />
     </main>
   );
 }

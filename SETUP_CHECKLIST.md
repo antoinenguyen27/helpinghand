@@ -1,50 +1,39 @@
 # SETUP_CHECKLIST
 
-1. Mic capture in Demo mode
-- Switch to Demo mode.
-- Click "Start Narrating" once.
-- Narrate while using keyboard/mouse in Chrome.
-- Confirm transcript segments appear as you pause naturally.
+1. Startup key validation
+- Unset `GOOGLE_GENERATIVE_AI_API_KEY` and start app.
+- Verify startup is blocked with explicit status error.
+- Repeat for missing `OPENROUTER_API_KEY`.
 
-2. VAD auto-segmentation
-- Keep Demo recording active.
-- Speak two short phrases with >800ms pause between them.
-- Verify two separate processed segments are sent.
-
-3. Work push-to-talk
+2. Work push-to-talk
 - Switch to Work mode.
-- Hold the mic button, speak one command, release.
-- Verify one transcript + one LangGraph response.
+- Hold mic, speak one command, release.
+- Verify transcript and orchestrated response.
 
-4. Multi-step work tool reasoning
-- In Work mode, request a task requiring context + action (example: inspect page controls then perform an edit).
-- Verify status stream shows multi-step execution (plan/tool loop) before final response.
+3. Hybrid browser execution
+- Trigger a reversible browser task in Work mode.
+- Verify `browser_execute` runs and reports step/status updates.
+- Confirm model is `google/gemini-3-flash-preview` in status/API trace logs.
 
-5. Confirmation gate for irreversible actions
-- Request a send/delete/publish/payment style action.
-- Verify the agent asks for explicit yes/no before execution.
+4. Interrupt behavior
+- Start a long browser task.
+- Say "stop" or "pause".
+- Verify interrupt status and execution stops via execution interrupt path.
+
+5. Irreversible gate
+- Request send/delete/publish/payment/checkout action.
+- Verify explicit yes/no confirmation gate.
 - Say "no" and verify cancellation.
 
-6. Stop-word interrupt
-- Run a long CUA task in Work mode.
-- Say "stop" or "pause" while CUA is running.
-- Verify interrupt status appears and task pauses.
+6. Auth blocker handling
+- Force login/MFA/captcha during execution.
+- Verify concise blocker summary is surfaced and no repeated retries.
 
-7. Graph checkpoint continuity (same app run)
-- Execute a first task that creates useful context.
-- Issue a follow-up request that depends on prior context.
-- Verify the second turn uses prior context without re-explaining everything.
+7. Demo mode regression
+- Record a short demo flow.
+- Finalize and review.
+- Save and confirm skill file creation under `skills/data/<domain>/`.
 
-8. Demo mode skill writing
-- Stay in Demo mode, narrate a short workflow.
-- Click End Demo & Review.
-- Verify agent produces finalize/correction response, then save.
-- Verify file in `skills/data/<domain>/<slug>.md`.
-
-9. Tool failure recovery
-- Trigger a blocked state (e.g., login wall).
-- Verify agent reports blocker and concrete next action.
-
-10. CUA execution via OpenRouter
-- In Work mode, issue a reversible browser task.
-- Verify status stream and successful completion using selected CUA model.
+8. Optional ElevenLabs path
+- Start app without ElevenLabs keys.
+- Verify app still runs and execution/transcription are unaffected.

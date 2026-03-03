@@ -1,13 +1,14 @@
-import { buildCUASystemPrompt } from './prompts.js';
+import { buildExecutionSystemPrompt } from './prompts.js';
 import { getStagehand } from '../electron/stagehand-manager.js';
-import { pushStatus, pushCUAState } from '../electron/status-bus.js';
+import { pushStatus, pushExecutionState } from '../electron/status-bus.js';
 
 let activeAbortController = null;
-let cuaRunning = false;
+let executionRunning = false;
+let activeAgent = null;
 let lastProgressAt = 0;
 let progressTimer = null;
-const CUA_TRACE_MAX_CHARS = Number(process.env.CUA_TRACE_MAX_CHARS || 2500);
-const DEFAULT_EXECUTION_MODEL = 'google/gemini-3-flash-preview';
+const EXECUTION_TRACE_MAX_CHARS = Number(process.env.EXECUTION_TRACE_MAX_CHARS || 2500);
+const EXECUTION_MODEL = 'google/gemini-3-flash-preview';
 
 function stringifyForTrace(value) {
   try {
@@ -17,19 +18,19 @@ function stringifyForTrace(value) {
   }
 }
 
-function pushCUATrace(label, payload) {
+function pushExecutionTrace(label, payload) {
   const serialized = stringifyForTrace(payload);
   const clipped =
-    serialized.length > CUA_TRACE_MAX_CHARS
-      ? `${serialized.slice(0, CUA_TRACE_MAX_CHARS)}... [truncated ${serialized.length - CUA_TRACE_MAX_CHARS} chars]`
+    serialized.length > EXECUTION_TRACE_MAX_CHARS
+      ? `${serialized.slice(0, EXECUTION_TRACE_MAX_CHARS)}... [truncated ${serialized.length - EXECUTION_TRACE_MAX_CHARS} chars]`
       : serialized;
-  pushStatus(`CUA trace - ${label}: ${clipped}`, 'api');
+  pushStatus(`Execution trace - ${label}: ${clipped}`, 'api');
 }
 
 function startNoProgressWatchdog() {
   clearNoProgressWatchdog();
   progressTimer = setInterval(() => {
-    if (!cuaRunning) return;
+    if (!executionRunning) return;
     const elapsed = Date.now() - lastProgressAt;
     if (elapsed > 5 * 60 * 1000) {
       pushStatus('Warning: no browser progress for over 5 minutes. You can say stop and retry.', 'warning');
@@ -46,64 +47,34 @@ function clearNoProgressWatchdog() {
 }
 
 function resolveExecutionConfig(decision) {
-  const configuredModel = String(
-    process.env.CUA_MODEL || process.env.STAGEHAND_MODEL || DEFAULT_EXECUTION_MODEL
-  ).trim();
-  const normalizedModel = normalizeOpenRouterModel(configuredModel) || DEFAULT_EXECUTION_MODEL;
-  const model =
-    normalizedModel === 'google/gemini-2.5-flash' ? DEFAULT_EXECUTION_MODEL : normalizedModel;
-  const apiKey = process.env.OPENROUTER_API_KEY;
-
-  if (!apiKey) {
-    throw new Error('Missing OPENROUTER_API_KEY for CUA execution.');
-  }
-  if (model !== normalizedModel) {
-    pushStatus(
-      `Configured model "${configuredModel}" is not CUA-capable; using ${DEFAULT_EXECUTION_MODEL} for mode=cua.`,
-      'warning'
-    );
+  if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+    throw new Error('Missing GOOGLE_GENERATIVE_AI_API_KEY for hybrid execution.');
   }
 
   return {
-    model,
-    apiKey,
-    endpoint: 'https://openrouter.ai/api/v1',
+    model: EXECUTION_MODEL,
     taskScope: decision.taskScope || 'short'
   };
 }
 
-function normalizeOpenRouterModel(modelName) {
-  const trimmed = String(modelName || '').trim();
-  if (!trimmed) return DEFAULT_EXECUTION_MODEL;
-  const parts = trimmed.split('/');
-  if (parts.length >= 3 && parts[0] === 'openai') {
-    return parts.slice(1).join('/');
-  }
-  return trimmed;
-}
-
-export async function executeCUAInstruction(decision) {
+export async function executeBrowserInstruction(decision) {
   const sh = await getStagehand();
   const execution = resolveExecutionConfig(decision);
-  const systemPrompt = buildCUASystemPrompt(decision);
+  const systemPrompt = buildExecutionSystemPrompt(decision);
 
   activeAbortController = new AbortController();
-  cuaRunning = true;
-  pushCUAState(true);
+  executionRunning = true;
+  pushExecutionState(true);
   lastProgressAt = Date.now();
   startNoProgressWatchdog();
 
   pushStatus(`Executing: ${decision.taskDescription}`, 'status');
-  pushStatus(`CUA execution ready (model=${execution.model}, endpoint=${execution.endpoint}).`, 'api');
+  pushStatus(`Hybrid execution ready (model=${execution.model}).`, 'api');
 
   try {
-    const agent = sh.agent({
-      mode: 'cua',
-      model: {
-        modelName: execution.model,
-        apiKey: execution.apiKey,
-        baseURL: execution.endpoint
-      },
+    activeAgent = sh.agent({
+      mode: 'hybrid',
+      model: execution.model,
       maxSteps: execution.taskScope === 'long' ? 35 : 15,
       systemPrompt,
       callbacks: {
@@ -114,17 +85,17 @@ export async function executeCUAInstruction(decision) {
         }
       }
     });
-    pushCUATrace('execute.request', {
+    pushExecutionTrace('execute.request', {
       model: execution.model,
       taskScope: execution.taskScope,
-      instruction: decision.cuaInstruction
+      instruction: decision.instruction
     });
 
-    const result = await agent.execute({
-      instruction: decision.cuaInstruction,
+    const result = await activeAgent.execute({
+      instruction: decision.instruction,
       maxSteps: execution.taskScope === 'long' ? 35 : 15
     });
-    pushCUATrace('execute.result', result || {});
+    pushExecutionTrace('execute.result', result || {});
 
     const reportedSuccess = result?.success !== false && result?.completed !== false;
     return {
@@ -134,12 +105,12 @@ export async function executeCUAInstruction(decision) {
     };
   } catch (error) {
     if (activeAbortController?.signal.aborted) {
-      pushStatus('CUA execution interrupted by user.', 'warning');
+      pushStatus('Execution interrupted by user.', 'warning');
       return { success: false, interrupted: true, summary: 'Execution interrupted by user.' };
     }
 
     const details = String(error?.message || error || 'unknown error');
-    pushCUATrace('execute.error', {
+    pushExecutionTrace('execute.error', {
       name: error?.name || 'Error',
       message: details,
       code: error?.code || null,
@@ -147,7 +118,7 @@ export async function executeCUAInstruction(decision) {
       cause: error?.cause ? String(error.cause?.message || error.cause) : null,
       responseBody: error?.response?.data || error?.response?.body || error?.body || null
     });
-    pushStatus(`CUA execution error: ${details}`, 'error');
+    pushStatus(`Execution error: ${details}`, 'error');
     if (/login|sign in|2fa|verification|captcha/i.test(details)) {
       return {
         success: false,
@@ -161,21 +132,27 @@ export async function executeCUAInstruction(decision) {
       summary: `Execution failed: ${details}`
     };
   } finally {
-    cuaRunning = false;
+    executionRunning = false;
     activeAbortController = null;
+    activeAgent = null;
     clearNoProgressWatchdog();
-    pushCUAState(false);
+    pushExecutionState(false);
   }
 }
 
-export async function pauseCUA() {
-  if (!cuaRunning || !activeAbortController) return { ok: true, interrupted: false };
+export async function pauseExecution() {
+  if (!executionRunning || !activeAbortController) return { ok: true, interrupted: false };
 
   activeAbortController.abort();
+  try {
+    await activeAgent?.stop?.();
+  } catch {
+    // Best effort stop; abort signal is still set for interruption flow.
+  }
   pushStatus('Paused current task. Listening for your next instruction.', 'status');
   return { ok: true, interrupted: true };
 }
 
-export function isCUARunning() {
-  return cuaRunning;
+export function isExecutionRunning() {
+  return executionRunning;
 }

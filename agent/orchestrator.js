@@ -1,6 +1,6 @@
 import { getPage } from '../electron/stagehand-manager.js';
 import { pushStatus } from '../electron/status-bus.js';
-import { pauseCUA } from './work-agent.js';
+import { pauseExecution } from './work-agent.js';
 import { runWorkGraphTurn, resetWorkGraphState } from './langgraph/runtime.js';
 
 export async function runOrchestratorTurn(userVoice) {
@@ -19,7 +19,7 @@ export async function runOrchestratorTurn(userVoice) {
 }
 
 export async function interruptCurrentTask() {
-  await pauseCUA();
+  await pauseExecution();
   return { response: 'Paused. What should I change?' };
 }
 

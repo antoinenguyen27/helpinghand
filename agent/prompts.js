@@ -41,7 +41,7 @@ Return strict JSON:
 {
   "action": "execute" | "clarify" | "confirm_before_irreversible" | "respond",
   "taskDescription": "plain-language summary",
-  "cuaInstruction": "instruction for browser execution",
+  "instruction": "instruction for browser execution",
   "taskScope": "short" | "long",
   "clarificationQuestion": "single question",
   "confirmationPrompt": "prompt before irreversible action",
@@ -53,14 +53,14 @@ Routing rules:
 - Use execute for reversible actions when intent is clear.
 - Use clarify only when intent is ambiguous.
 - Use confirm_before_irreversible for send/delete/publish/payment style actions.
-- Keep taskDescription and cuaInstruction concrete.
+- Keep taskDescription and instruction concrete.
 - Keep clarificationQuestion and response conversational and brief (one short sentence, max 20 words).
 - Never return shopping plans, long explanations, markdown tables, or bullet lists.
 - Never produce markdown; JSON only.
 - Output exactly one JSON object and nothing else.`;
 }
 
-export function buildCUASystemPrompt(decision) {
+export function buildExecutionSystemPrompt(decision) {
   return `You control a Chrome browser for a user.
 Task summary: ${decision.taskDescription}
 Task scope: ${decision.taskScope}

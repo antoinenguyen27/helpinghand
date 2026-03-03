@@ -1,12 +1,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Stagehand, AISdkClient } from '@browserbasehq/stagehand';
-import { createOpenAI } from '@ai-sdk/openai';
+import { Stagehand } from '@browserbasehq/stagehand';
 
 let stagehand = null;
 const DEFAULT_START_URL = process.env.START_URL || 'https://www.google.com';
-const DEFAULT_STAGEHAND_MODEL = 'google/gemini-2.5-flash';
+const EXECUTION_MODEL = 'google/gemini-3-flash-preview';
 
 export class ChromeNotFoundError extends Error {
   constructor(pathsSearched) {
@@ -61,55 +60,28 @@ export function getChromePath() {
   return found;
 }
 
-function buildOpenRouterClient() {
-  const configuredModel = String(process.env.STAGEHAND_MODEL || DEFAULT_STAGEHAND_MODEL).trim();
-  const normalizedModel = normalizeOpenRouterModel(configuredModel);
-  if (normalizedModel !== configuredModel) {
-    // Keep execution model IDs canonical for OpenRouter (provider/model).
-    // Example: openai/google/gemini-2.5-flash -> google/gemini-2.5-flash
-    console.warn(
-      `[stagehand] Normalized STAGEHAND_MODEL from "${configuredModel}" to "${normalizedModel}" for OpenRouter compatibility.`
+function requireGoogleKey() {
+  if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+    throw new Error(
+      'Missing GOOGLE_GENERATIVE_AI_API_KEY. Hybrid execution requires Google Generative AI credentials.'
     );
   }
-  const provider = createOpenAI({
-    apiKey: process.env.OPENROUTER_API_KEY,
-    baseURL: 'https://openrouter.ai/api/v1',
-    defaultHeaders: {
-      'HTTP-Referer': 'https://github.com/your-org/universal-agent',
-      'X-Title': 'Universal Agent'
-    }
-  });
-
-  // Verified via web: Stagehand v3 docs show AISdkClient + OpenAI-compatible providers work for LOCAL observe/act.
-  return new AISdkClient({
-    model: provider(normalizedModel)
-  });
-}
-
-function normalizeOpenRouterModel(modelName) {
-  const trimmed = String(modelName || '').trim();
-  if (!trimmed) return DEFAULT_STAGEHAND_MODEL;
-
-  const parts = trimmed.split('/');
-  if (parts.length >= 3 && parts[0] === 'openai') {
-    return parts.slice(1).join('/');
-  }
-  return trimmed;
 }
 
 export async function getStagehand() {
   if (stagehand) return stagehand;
+  requireGoogleKey();
 
   stagehand = new Stagehand({
     env: 'LOCAL',
     experimental: true,
     disableAPI: true,
+    model: EXECUTION_MODEL,
     localBrowserLaunchOptions: {
       headless: false,
       executablePath: getChromePath(),
       args: []
     },
-    llmClient: buildOpenRouterClient(),
     verbose: 0,
     enableCaching: true
   });

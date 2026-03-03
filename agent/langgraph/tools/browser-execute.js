@@ -1,6 +1,6 @@
 import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
-import { executeCUAInstruction } from '../../work-agent.js';
+import { executeBrowserInstruction } from '../../work-agent.js';
 import { sleep } from '../utils.js';
 
 function isRetryableFailure(result) {
@@ -10,10 +10,10 @@ function isRetryableFailure(result) {
   return true;
 }
 
-export async function runCUAExecute(input) {
+export async function runBrowserExecute(input) {
   const decision = {
     taskDescription: input.taskDescription,
-    cuaInstruction: input.cuaInstruction,
+    instruction: input.instruction,
     taskScope: input.taskScope || 'short'
   };
 
@@ -22,7 +22,7 @@ export async function runCUAExecute(input) {
 
   while (attempts < 2) {
     attempts += 1;
-    lastResult = await executeCUAInstruction(decision);
+    lastResult = await executeBrowserInstruction(decision);
     if (!isRetryableFailure(lastResult)) break;
     if (attempts < 2) await sleep(350);
   }
@@ -34,17 +34,17 @@ export async function runCUAExecute(input) {
   };
 }
 
-export const cuaExecuteTool = tool(
-  async ({ taskDescription, cuaInstruction, taskScope }) => {
-    return runCUAExecute({ taskDescription, cuaInstruction, taskScope });
+export const browserExecuteTool = tool(
+  async ({ taskDescription, instruction, taskScope }) => {
+    return runBrowserExecute({ taskDescription, instruction, taskScope });
   },
   {
-    name: 'cua_execute',
+    name: 'browser_execute',
     description:
       'Execute a browser task using Stagehand agent(). Use only after intent is concrete and irreversible actions are confirmed.',
     schema: z.object({
       taskDescription: z.string().min(1).describe('Short summary of what to do.'),
-      cuaInstruction: z.string().min(1).describe('Concrete browser instruction to execute.'),
+      instruction: z.string().min(1).describe('Concrete browser instruction to execute.'),
       taskScope: z.enum(['short', 'long']).default('short').describe('Estimated task length.')
     })
   }

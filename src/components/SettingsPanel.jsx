@@ -9,34 +9,18 @@ function Indicator({ label, active }) {
   );
 }
 
-export default function SettingsPanel({ settings, onChangeModel }) {
-  const cuaChoices = [
-    'google/gemini-2.5-flash',
-    'google/gemini-2.5-computer-use-preview-10-2025',
-    'google/gemini-3-flash-preview'
-  ];
-
+export default function SettingsPanel({ settings }) {
   return (
     <div className="rounded-xl border border-slate-700 bg-slate-900/70 p-3">
       <h3 className="mb-2 text-sm font-semibold text-slate-200">Settings</h3>
       <div className="grid grid-cols-2 gap-2">
         <Indicator label="OpenRouter" active={Boolean(settings.openrouterKey)} />
+        <Indicator label="Google GenAI" active={Boolean(settings.googleKey)} />
         <Indicator label="ElevenLabs" active={Boolean(settings.elevenlabsKey)} />
         <Indicator label="Voice ID" active={Boolean(settings.elevenlabsVoiceId)} />
       </div>
       <div className="mt-2 text-xs text-slate-400">
-        <label className="mb-1 block">CUA model</label>
-        <select
-          value={settings.cuaModel || 'google/gemini-2.5-flash'}
-          onChange={(event) => onChangeModel?.({ cuaModel: event.target.value })}
-          className="w-full rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-xs text-slate-100"
-        >
-          {cuaChoices.map((value) => (
-            <option key={value} value={value}>
-              {value}
-            </option>
-          ))}
-        </select>
+        <p>Execution: {settings.executionModel || 'google/gemini-3-flash-preview'}</p>
         <p className="mt-2">Orchestrator: {settings.orchestratorModel || 'google/gemini-3-flash-preview'}</p>
       </div>
     </div>

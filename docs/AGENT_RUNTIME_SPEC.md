@@ -1,116 +1,67 @@
 # Agent Runtime Spec (LangGraph)
 
 ## Scope
-This spec defines the LangGraph runtime that replaces prompt-only orchestration for both Work mode and Demo mode.
+This spec defines LangGraph runtime behavior for Work and Demo modes, with browser execution standardized on Stagehand hybrid mode.
 
-Persistence target: in-memory checkpoints across turns during one app run.
+## Provider Contract
+- OpenRouter:
+  - Voice transcription (`voxtral-small-24b-2507` path)
+  - Work/demo orchestration chat model
+- Google Generative AI:
+  - Stagehand hybrid execution with locked model `google/gemini-3-flash-preview`
+- ElevenLabs:
+  - Optional TTS only
 
-## Runtime Layout
-- `agent/langgraph/runtime.js`: graph compilation, checkpointer, thread IDs, run/reset APIs.
-- `agent/langgraph/state.js`: graph state annotations.
-- `agent/langgraph/tools/*`: shared tool adapters.
-- `agent/langgraph/graphs/work-graph.js`: work orchestration graph.
-- `agent/langgraph/graphs/demo-graph.js`: demo orchestration graph.
+## Required Environment
+- Required: `OPENROUTER_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`
+- Optional: `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`
+- Startup is blocked when required keys are missing.
 
 ## Work Graph
 
 ### Nodes
 1. `ingest_user_turn`
-- Input: user transcript + page URL/domain.
-- Effect: append human message and reset per-turn loop counters.
+- Adds latest user transcript.
 
 2. `agent_plan`
-- Uses OpenRouter-backed tool-calling model.
-- Decides direct response vs tool usage.
-- Handles yes/no confirmation turns against pending irreversible operations.
+- Uses OpenRouter-backed chat model with tool calling.
+- Handles yes/no confirmation turns for irreversible operations.
 
 3. `tool_exec`
-- ToolNode executor for all registered work tools.
+- Executes tool calls through LangGraph `ToolNode`.
 
 4. `safety_gate`
-- Intercepts irreversible `cua_execute` requests.
-- Stores pending execution and emits confirmation prompt.
+- Intercepts irreversible `browser_execute` calls.
+- Stores pending action and returns confirmation prompt.
 
 5. `respond`
-- Produces final spoken response and writes compatibility memory entry.
+- Produces final response and writes session memory entry.
 
-### Edges
-- `START -> ingest_user_turn -> agent_plan`
-- `agent_plan -> tool_exec` (when tool calls present)
-- `tool_exec -> agent_plan` (loop)
-- `agent_plan -> safety_gate -> respond` (irreversible operations)
-- `agent_plan -> respond` (direct response)
-- `respond -> END`
+### Tools
+- `read_skills`
+- `observe_page`
+- `read_session_memory`
+- `navigate`
+- `browser_execute`
+  - Input: `{ taskDescription, instruction, taskScope }`
+  - Output: `{ success, summary, blockedByAuth?, interrupted?, raw?, attempts, retriesExhausted }`
 
-### Limits
-- `LANGGRAPH_MAX_LOOPS` default `8`.
-- Tool failure retry count default `1` retry (2 total attempts).
+### Rules
+- Retry one transient execution failure.
+- Do not retry auth/security blockers.
+- Require explicit confirmation for irreversible actions.
+- Respect execution interrupts and return control to planner.
+
+## Interrupt and State Channels
+- Interrupt invoke channel: `exec:interrupt`
+- Execution state stream channel: `exec:state`
+- Preload API:
+  - `interruptExecution()`
+  - `onExecutionState(callback)`
 
 ## Demo Graph
-
-### Nodes
-1. `ingest_demo_event`
-- Normalizes event (`voice`, `finalize`, `save`) and updates turn flags.
-
-2. `context_collect`
-- Calls `observe_page` tool adapter to refresh observed UI context.
-
-3. `demo_synthesis_agent`
-- Generates/updates skill draft from narration + observed context.
-- Handles correction loop when awaiting confirmation.
-
-4. `demo_confirmation_gate`
-- Routes save vs continue.
-
-5. `save_skill`
-- Persists skill markdown via existing skill writer adapter.
-
-6. `demo_response`
-- Returns final response payload.
-
-### Edges
-- `START -> ingest_demo_event -> context_collect -> demo_synthesis_agent -> demo_confirmation_gate`
-- `demo_confirmation_gate -> save_skill -> demo_response`
-- `demo_confirmation_gate -> demo_response`
-- `demo_response -> END`
-
-## Tool Contracts
-
-### `read_skills`
-- Input: `{ domain: string }`
-- Output: `{ skills: [{ name, domain, content }] }`
-
-### `observe_page`
-- Input: `{ reason: string, limit?: number }`
-- Output: `{ url, observedElements, source, weakContext }`
-
-### `read_session_memory`
-- Input: `{ limit?: number }`
-- Output: `{ entries }`
-
-### `navigate`
-- Input: `{ url: string }`
-- Output: `{ url, navigated: boolean }`
-
-### `cua_execute`
-- Input: `{ taskDescription, cuaInstruction, taskScope }`
-- Output: `{ success, summary, blockedByAuth?, interrupted?, raw?, attempts, retriesExhausted }`
-
-## Failure and Recovery Rules
-- Retry transient tool failures once.
-- Do not retry auth/security blockers.
-- Require explicit confirmation before irreversible execution.
-- Respect CUA interrupt and return control to planner.
-- If retries exhaust, return blocker response with concrete next step.
-
-## Compatibility Requirements
-- Keep existing IPC contracts unchanged.
-- Keep existing renderer payload shapes unchanged.
-- Maintain compatibility memory writes during migration (`memory/session-memory.js`).
-
-## Acceptance Criteria
-1. Multi-step work tasks execute through tool loop.
-2. Irreversible actions require explicit yes/no confirmation.
-3. Tool failure retries and blocker reporting work deterministically.
-4. Demo flow supports draft iteration, finalize, correction, and save.
-5. Context persists across turns within one app run (thread checkpoint continuity).
+Demo flow remains functionally unchanged:
+- capture narration
+- synthesize/refine draft
+- confirmation loop
+- save skill markdown

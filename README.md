@@ -1,83 +1,51 @@
 # Universal Agent
 
-Universal Agent is an open-source Electron desktop app that runs a voice-first browser collaborator. It pairs a React control panel with an agent-owned Chrome window controlled via Stagehand.
+Universal Agent is an Electron desktop app with a voice-first control panel and an agent-owned Chrome window controlled by Stagehand.
 
-## Two-Window Architecture
-- Control window (Electron renderer): mode toggle, demo narration toggle, work push-to-talk, transcript/status feed, settings, skill log.
-- Agent window (Stagehand Chrome): visible browser controlled by Stagehand `observe()`, `act()`, and `agent({ mode: 'hybrid' })`.
+## Architecture
+- Renderer (React): mic controls, mode controls, status/transcript feed, settings, skill log.
+- Main process (Electron): transcription, LangGraph orchestration, Stagehand browser execution, TTS, skill I/O.
+- Agent browser: visible Chrome window launched and controlled by Stagehand.
 
-Heavy work runs in Electron main process only: Stagehand, LLM calls, transcription, TTS, LangGraph orchestration, and skill file I/O.
+## Provider Split
+- OpenRouter:
+  - Voxtral transcription in `/Users/an/Documents/helpinghand/voice/transcription.js`
+  - LangGraph orchestrator/demo chat model in `/Users/an/Documents/helpinghand/agent/langgraph/model.js`
+- Google Generative AI:
+  - Stagehand browser execution in hybrid mode using locked model `google/gemini-3-flash-preview`
+- ElevenLabs:
+  - Optional TTS provider; system speech fallback remains available.
 
-## LangGraph Runtime
-Work and Demo modes are orchestrated with LangGraph state graphs and in-memory checkpoints (per app run).
-
-### Work graph
-- Nodes: `ingest_user_turn` -> `agent_plan` -> (`tool_exec` loop | `safety_gate` | `respond`)
-- Tool loop uses explicit tools:
+## Work Runtime
+- LangGraph work loop uses tools:
   - `read_skills`
   - `observe_page`
   - `read_session_memory`
   - `navigate`
-  - `cua_execute`
-- Irreversible actions are gated through `safety_gate` and require explicit confirmation.
-- Tool failures are retried once for transient errors and surfaced as blockers when exhausted.
+  - `browser_execute`
+- Irreversible actions are held behind explicit confirmation.
+- Execution interruptions use `exec:interrupt` and state stream `exec:state`.
 
-### Demo graph
-- Nodes: `ingest_demo_event` -> `context_collect` -> `demo_synthesis_agent` -> `demo_confirmation_gate` -> (`save_skill` | `demo_response`)
-- Keeps multi-turn draft state and confirmation state in LangGraph checkpoint state.
-- Uses shared `observe_page` and existing skill-writing path for save.
+## Required Environment
+- Required:
+  - `OPENROUTER_API_KEY`
+  - `GOOGLE_GENERATIVE_AI_API_KEY`
+- Optional:
+  - `ELEVENLABS_API_KEY`
+  - `ELEVENLABS_VOICE_ID`
 
-## How It Works
-- Demo mode:
-  - Toggle-on recording with VAD auto-segmentation at natural pauses.
-  - LangGraph tracks narration + observed UI context to iteratively draft/refine skill markdown.
-  - Confirmation loop writes to `skills/data/<domain>/<slug>.md`.
-- Work mode:
-  - Push-to-talk command capture.
-  - LangGraph planning loop reasons across multiple tool steps.
-  - Domain skills + session memory + page observation + CUA execution are all tool-mediated.
-  - Stop-word interjection runs while CUA is active.
+Startup is blocked when either required key is missing, and the app emits a startup error status.
 
-## Getting Started
-1. Install dependencies:
-   - `npm install`
-2. Configure env:
-   - `cp .env.example .env`
-   - set `OPENROUTER_API_KEY`
-3. Ensure Google Chrome is installed.
-4. Run dev:
-   - `npm run dev`
-5. Build renderer:
-   - `npm run build`
-6. Package installer:
-   - `npm run dist`
-
-By default, the agent-owned Chrome launches to `https://www.google.com`. You can override this with `START_URL` in `.env`.
-
-## Security Model
-- `contextIsolation: true`
-- `nodeIntegration: false`
-- `sandbox: true`
-- Minimal preload API via `contextBridge` only
-- Renderer never receives direct `ipcRenderer`
-- IPC channels are centralized in `electron/ipc-channels.cjs`
-- Main process performs all privileged work (filesystem/network/automation)
+## Quick Start
+1. `npm install`
+2. `cp .env.example .env`
+3. Set required keys in `.env`
+4. `npm run dev`
 
 ## Troubleshooting
+- Missing required keys:
+  - Check Settings indicators for OpenRouter and Google GenAI.
+- Login/MFA/captcha blocker during execution:
+  - Complete auth in Chrome, then retry.
 - Chrome not found:
-  - Status feed shows explicit error with searched executable paths.
-- Login wall / 2FA during CUA:
-  - CUA stops and reports blocker. Complete sign-in in Chrome and retry.
-- OpenRouter model errors:
-  - Verify `CUA_MODEL`, `ORCHESTRATOR_MODEL`, `DEMO_MODEL`, `STAGEHAND_MODEL` for your account.
-- Missing key:
-  - Check settings panel OpenRouter indicator and `.env`.
-
-## Dependencies
-- `openai` package is used as a generic OpenAI-compatible client for OpenRouter endpoints in legacy modules.
-- `@langchain/langgraph` powers graph orchestration + in-memory checkpoints.
-- `@langchain/openai` powers OpenRouter-backed chat models inside graphs.
-- `@ai-sdk/openai` remains required by Stagehand client wiring in `electron/stagehand-manager.js`.
-
-## Licensing
-- License placeholder: MIT or Apache-2.0 (TBD).
+  - Stagehand startup error includes searched executable paths.
