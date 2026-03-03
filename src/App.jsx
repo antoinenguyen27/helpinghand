@@ -403,14 +403,14 @@ export default function App() {
       mode === MODES.DEMO
         ? demoStage === DEMO_STAGE.CAPTURE
           ? isDemoRecording
-            ? 'Demo Capture: recording continuously with VAD segmenting'
-            : 'Demo Capture: click to start recording'
+            ? 'Recording demo. Click to stop.'
+            : 'Click Start Recording to begin demo.'
           : demoAwaitingConfirmation
-            ? 'Demo Review: ready to create skill or apply corrections'
-            : 'Demo Review: answer clarifying questions'
+            ? 'Create skill or record corrections.'
+            : 'Hold to answer clarifying question.'
         : executionRunning
-          ? 'Work Mode: task running (say stop/pause to interrupt)'
-          : 'Work Mode: hold to speak command',
+          ? 'Task running. Say stop to interrupt.'
+          : 'Hold button to speak task.',
     [mode, demoStage, demoAwaitingConfirmation, executionRunning, isDemoRecording]
   );
 
@@ -428,7 +428,7 @@ export default function App() {
         <div className="window-top-pad drag-region" aria-hidden="true" />
         <header className="app-header drag-region">
           <div>
-            <h1>Universal Agent</h1>
+            <h1>Universal</h1>
             <p>{modeIndicator}</p>
           </div>
           <div className="header-controls no-drag">
@@ -560,44 +560,59 @@ export default function App() {
               )}
             </div>
           ) : (
-            <button
-              type="button"
-              disabled={processing}
-              onMouseDown={() => {
-                appendStatus('status', 'Work speak button pressed: recording started.');
-                startListening();
-              }}
-              onMouseUp={() => {
-                appendStatus('status', 'Work speak button released: recording stopped.');
-                stopListening();
-              }}
-              onMouseLeave={
-                isListening
-                  ? () => {
-                      stopListening();
-                    }
-                  : undefined
-              }
-              onTouchStart={(event) => {
-                event.preventDefault();
-                appendStatus('status', 'Work speak button touched: recording started.');
-                startListening();
-              }}
-              onTouchEnd={(event) => {
-                event.preventDefault();
-                appendStatus('status', 'Work speak touch ended: recording stopped.');
-                stopListening();
-              }}
-              className={`glass-btn ${isListening ? 'danger' : 'primary'} ${processing ? 'disabled' : ''}`}
-            >
-              {isListening ? 'Listening...' : 'Hold to Speak'}
-            </button>
+            <div className="stack">
+              <button
+                type="button"
+                disabled={processing}
+                onMouseDown={() => {
+                  appendStatus('status', 'Work speak button pressed: recording started.');
+                  startListening();
+                }}
+                onMouseUp={() => {
+                  appendStatus('status', 'Work speak button released: recording stopped.');
+                  stopListening();
+                }}
+                onMouseLeave={
+                  isListening
+                    ? () => {
+                        stopListening();
+                      }
+                    : undefined
+                }
+                onTouchStart={(event) => {
+                  event.preventDefault();
+                  appendStatus('status', 'Work speak button touched: recording started.');
+                  startListening();
+                }}
+                onTouchEnd={(event) => {
+                  event.preventDefault();
+                  appendStatus('status', 'Work speak touch ended: recording stopped.');
+                  stopListening();
+                }}
+                className={`glass-btn ${isListening ? 'danger' : 'primary'} ${processing ? 'disabled' : ''}`}
+              >
+                {isListening ? 'Listening...' : 'Hold to Speak'}
+              </button>
+              {executionRunning ? (
+                <button
+                  type="button"
+                  className="glass-btn danger"
+                  onClick={async () => {
+                    if (!ua) return;
+                    appendStatus('interrupt', 'Stop button pressed. Interrupting current execution task.');
+                    await ua.interruptExecution();
+                  }}
+                >
+                  Stop Task
+                </button>
+              ) : null}
+            </div>
           )}
         </div>
 
         <section
           className="glass-inset chat-panel"
-          onClick={() => setChatComposerOpen(true)}
+          onClick={() => setChatComposerOpen((value) => !value)}
           onFocus={() => setChatComposerOpen(true)}
           role="button"
           tabIndex={0}
@@ -629,7 +644,7 @@ export default function App() {
                 className="glass-input"
                 value={chatInput}
                 onChange={(event) => setChatInput(event.target.value)}
-                placeholder={mode === MODES.WORK ? 'Type a task...' : 'Switch to Work mode for text commands'}
+                placeholder={mode === MODES.WORK ? 'Type a task...' : 'Text input in Work mode only'}
                 disabled={processing || mode !== MODES.WORK}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') {

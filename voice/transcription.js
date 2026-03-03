@@ -9,7 +9,7 @@ const openrouter = new OpenAI({
   baseURL: 'https://openrouter.ai/api/v1',
   defaultHeaders: {
     'HTTP-Referer': 'https://github.com/your-org/universal-agent',
-    'X-Title': 'Universal Agent'
+    'X-Title': 'Universal'
   }
 });
 

@@ -10,7 +10,7 @@ const EXECUTION_MODEL = 'google/gemini-3-flash-preview';
 export class ChromeNotFoundError extends Error {
   constructor(pathsSearched) {
     super(
-      `Chrome not found. Install Google Chrome and restart Universal Agent. Searched: ${pathsSearched.join(', ')}`
+      `Chrome not found. Install Google Chrome and restart Universal. Searched: ${pathsSearched.join(', ')}`
     );
     this.name = 'ChromeNotFoundError';
   }

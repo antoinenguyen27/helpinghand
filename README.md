@@ -1,6 +1,6 @@
-# Universal Agent
+# Universal
 
-Universal Agent is an Electron desktop app with a voice-first control panel and an agent-owned Chrome window controlled by Stagehand.
+Universal is an Electron desktop app with a voice-first control panel and an agent-owned Chrome window controlled by Stagehand.
 
 ## Architecture
 - Renderer (React): mic controls, mode controls, status/transcript feed, settings, skill log.

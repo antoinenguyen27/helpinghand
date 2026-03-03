@@ -25,26 +25,28 @@ export function useWorkRecorder({ onRecording, enableStopWordDetection, onInterr
     };
 
     recorder.onstop = async () => {
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-      chunksRef.current = [];
-
-      const payload = await toTranscriptionPayload(blob);
-      if (payload.audioBase64) {
-        onLog?.(
-          payload.convertedToWav
-            ? `Work segment converted to wav and sent (${blob.size} bytes source).`
-            : `Work segment sent as original webm (${blob.size} bytes source).`,
-          payload.convertedToWav ? 'status' : 'warning'
-        );
-        await onRecording(payload.audioBase64, payload.audioFormat);
-      } else {
-        onLog?.('Work segment conversion failed: base64 payload empty.', 'error');
-      }
-
-      streamRef.current = null;
-      mediaRecorderRef.current = null;
       setIsListening(false);
+      try {
+        streamRef.current?.getTracks().forEach((track) => track.stop());
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+        chunksRef.current = [];
+
+        const payload = await toTranscriptionPayload(blob);
+        if (payload.audioBase64) {
+          onLog?.(
+            payload.convertedToWav
+              ? `Work segment converted to wav and sent (${blob.size} bytes source).`
+              : `Work segment sent as original webm (${blob.size} bytes source).`,
+            payload.convertedToWav ? 'status' : 'warning'
+          );
+          await onRecording(payload.audioBase64, payload.audioFormat);
+        } else {
+          onLog?.('Work segment conversion failed: base64 payload empty.', 'error');
+        }
+      } finally {
+        streamRef.current = null;
+        mediaRecorderRef.current = null;
+      }
     };
 
     recorder.start();

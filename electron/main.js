@@ -42,7 +42,7 @@ function createWindow() {
     minWidth: 340,
     minHeight: 544,
     show: false,
-    title: 'Universal Agent',
+    title: 'Universal',
     titleBarStyle: 'hiddenInset',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -176,7 +176,7 @@ app.whenReady().then(async () => {
     );
   }
 
-  pushStatus('Universal Agent ready.');
+  pushStatus('Universal ready.');
 });
 
 app.on('activate', () => {

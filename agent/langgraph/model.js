@@ -3,7 +3,7 @@ import { ChatOpenAI } from '@langchain/openai';
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 const DEFAULT_HEADERS = {
   'HTTP-Referer': 'https://github.com/your-org/universal-agent',
-  'X-Title': 'Universal Agent'
+  'X-Title': 'Universal'
 };
 
 export function createOpenRouterChatModel({ model, temperature = 0.1, maxTokens } = {}) {
