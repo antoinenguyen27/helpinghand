@@ -6,6 +6,25 @@ let activeAbortController = null;
 let cuaRunning = false;
 let lastProgressAt = 0;
 let progressTimer = null;
+const CUA_TRACE_MAX_CHARS = Number(process.env.CUA_TRACE_MAX_CHARS || 2500);
+const DEFAULT_EXECUTION_MODEL = 'google/gemini-3-flash-preview';
+
+function stringifyForTrace(value) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function pushCUATrace(label, payload) {
+  const serialized = stringifyForTrace(payload);
+  const clipped =
+    serialized.length > CUA_TRACE_MAX_CHARS
+      ? `${serialized.slice(0, CUA_TRACE_MAX_CHARS)}... [truncated ${serialized.length - CUA_TRACE_MAX_CHARS} chars]`
+      : serialized;
+  pushStatus(`CUA trace - ${label}: ${clipped}`, 'api');
+}
 
 function startNoProgressWatchdog() {
   clearNoProgressWatchdog();
@@ -26,20 +45,46 @@ function clearNoProgressWatchdog() {
   }
 }
 
-function resolveCUAProvider(decision) {
-  const model = process.env.CUA_MODEL || 'anthropic/claude-sonnet-4-20250514';
+function resolveExecutionConfig(decision) {
+  const configuredModel = String(
+    process.env.CUA_MODEL || process.env.STAGEHAND_MODEL || DEFAULT_EXECUTION_MODEL
+  ).trim();
+  const normalizedModel = normalizeOpenRouterModel(configuredModel) || DEFAULT_EXECUTION_MODEL;
+  const model =
+    normalizedModel === 'google/gemini-2.5-flash' ? DEFAULT_EXECUTION_MODEL : normalizedModel;
   const apiKey = process.env.OPENROUTER_API_KEY;
 
   if (!apiKey) {
-    throw new Error('Missing OPENROUTER_API_KEY for CUA model execution.');
+    throw new Error('Missing OPENROUTER_API_KEY for CUA execution.');
+  }
+  if (model !== normalizedModel) {
+    pushStatus(
+      `Configured model "${configuredModel}" is not CUA-capable; using ${DEFAULT_EXECUTION_MODEL} for mode=cua.`,
+      'warning'
+    );
   }
 
-  return { model, apiKey, taskScope: decision.taskScope || 'short' };
+  return {
+    model,
+    apiKey,
+    endpoint: 'https://openrouter.ai/api/v1',
+    taskScope: decision.taskScope || 'short'
+  };
+}
+
+function normalizeOpenRouterModel(modelName) {
+  const trimmed = String(modelName || '').trim();
+  if (!trimmed) return DEFAULT_EXECUTION_MODEL;
+  const parts = trimmed.split('/');
+  if (parts.length >= 3 && parts[0] === 'openai') {
+    return parts.slice(1).join('/');
+  }
+  return trimmed;
 }
 
 export async function executeCUAInstruction(decision) {
   const sh = await getStagehand();
-  const provider = resolveCUAProvider(decision);
+  const execution = resolveExecutionConfig(decision);
   const systemPrompt = buildCUASystemPrompt(decision);
 
   activeAbortController = new AbortController();
@@ -49,18 +94,17 @@ export async function executeCUAInstruction(decision) {
   startNoProgressWatchdog();
 
   pushStatus(`Executing: ${decision.taskDescription}`, 'status');
-  pushStatus(`CUA provider ready (model=${provider.model}, endpoint=https://openrouter.ai/api/v1).`, 'api');
+  pushStatus(`CUA execution ready (model=${execution.model}, endpoint=${execution.endpoint}).`, 'api');
 
   try {
-    // Verified via web: Stagehand agent() accepts model object with modelName/apiKey/baseURL for OpenAI-compatible endpoints.
     const agent = sh.agent({
-      mode: 'hybrid',
+      mode: 'cua',
       model: {
-        modelName: provider.model,
-        apiKey: provider.apiKey,
-        baseURL: 'https://openrouter.ai/api/v1'
+        modelName: execution.model,
+        apiKey: execution.apiKey,
+        baseURL: execution.endpoint
       },
-      maxSteps: provider.taskScope === 'long' ? 35 : 15,
+      maxSteps: execution.taskScope === 'long' ? 35 : 15,
       systemPrompt,
       callbacks: {
         onStepFinish: (step) => {
@@ -70,16 +114,22 @@ export async function executeCUAInstruction(decision) {
         }
       }
     });
+    pushCUATrace('execute.request', {
+      model: execution.model,
+      taskScope: execution.taskScope,
+      instruction: decision.cuaInstruction
+    });
 
     const result = await agent.execute({
       instruction: decision.cuaInstruction,
-      signal: activeAbortController.signal,
-      maxSteps: provider.taskScope === 'long' ? 35 : 15
+      maxSteps: execution.taskScope === 'long' ? 35 : 15
     });
+    pushCUATrace('execute.result', result || {});
 
+    const reportedSuccess = result?.success !== false && result?.completed !== false;
     return {
-      success: true,
-      summary: result?.summary || result?.message || 'Task completed.',
+      success: reportedSuccess,
+      summary: result?.summary || result?.message || (reportedSuccess ? 'Task completed.' : 'Task failed.'),
       raw: result
     };
   } catch (error) {
@@ -89,6 +139,14 @@ export async function executeCUAInstruction(decision) {
     }
 
     const details = String(error?.message || error || 'unknown error');
+    pushCUATrace('execute.error', {
+      name: error?.name || 'Error',
+      message: details,
+      code: error?.code || null,
+      status: error?.status || error?.statusCode || null,
+      cause: error?.cause ? String(error.cause?.message || error.cause) : null,
+      responseBody: error?.response?.data || error?.response?.body || error?.body || null
+    });
     pushStatus(`CUA execution error: ${details}`, 'error');
     if (/login|sign in|2fa|verification|captcha/i.test(details)) {
       return {
