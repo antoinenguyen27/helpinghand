@@ -258,7 +258,9 @@ export default function SettingsPanel({
                 autoComplete="off"
                 value={draft.elevenlabsVoiceId}
                 onChange={(event) => onDraftChange('elevenlabsVoiceId', event.target.value)}
-                placeholder={settings.elevenlabsVoiceConfigured ? 'Configured' : 'Optional'}
+                placeholder={
+                  settings.elevenlabsVoiceConfigured ? 'Configured' : 'Optional (defaults to EST9Ui6982FZPSi7gCHi)'
+                }
               />
             </label>
           </div>

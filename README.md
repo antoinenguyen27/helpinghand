@@ -16,6 +16,7 @@ Universal is an Electron desktop app with a voice-first control panel and an age
   - Agent mode is configurable in Settings (`DOM`, `CUA`, `Hybrid`; default `CUA`)
 - ElevenLabs:
   - Optional TTS provider; system speech fallback remains available.
+  - If `ELEVENLABS_API_KEY` is set and `ELEVENLABS_VOICE_ID` is empty, TTS uses default voice `EST9Ui6982FZPSi7gCHi`.
 
 ## Work Runtime
 - LangGraph work loop uses tools:
@@ -33,8 +34,8 @@ Universal is an Electron desktop app with a voice-first control panel and an age
   - `ANTHROPIC_API_KEY`
 - Optional:
   - `STAGEHAND_AGENT_MODE` (`dom` | `cua` | `hybrid`, default `cua`)
-  - `ELEVENLABS_API_KEY`
-  - `ELEVENLABS_VOICE_ID`
+  - `ELEVENLABS_API_KEY` (enables ElevenLabs TTS)
+  - `ELEVENLABS_VOICE_ID` (optional override; defaults to `EST9Ui6982FZPSi7gCHi`)
 
 Startup is not blocked when required keys are missing. The app starts and emits a startup warning, while Work/Demo runtime actions remain unavailable until keys are configured (including via Settings).
 

@@ -12,10 +12,11 @@ This spec defines LangGraph runtime behavior for Work and Demo modes, with brows
   - Agent mode selectable via `STAGEHAND_AGENT_MODE` / Settings (`dom` | `cua` | `hybrid`)
 - ElevenLabs:
   - Optional TTS only
+  - Uses default voice `EST9Ui6982FZPSi7gCHi` when `ELEVENLABS_API_KEY` is set and `ELEVENLABS_VOICE_ID` is empty
 
 ## Required Environment
 - Required: `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`
-- Optional: `STAGEHAND_AGENT_MODE`, `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`
+- Optional: `STAGEHAND_AGENT_MODE`, `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` (voice ID defaults to `EST9Ui6982FZPSi7gCHi`)
 - App startup is allowed when required keys are missing, but Work/Demo runtime actions are blocked until required keys are configured.
 
 ## Work Graph

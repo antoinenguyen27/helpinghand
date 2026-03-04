@@ -2,11 +2,12 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
+const DEFAULT_ELEVENLABS_VOICE_ID = 'EST9Ui6982FZPSi7gCHi';
 
 export async function speak(text) {
   if (!text?.trim()) return { audioBase64: null, mimeType: null, source: 'none' };
 
-  if (process.env.ELEVENLABS_API_KEY && process.env.ELEVENLABS_VOICE_ID) {
+  if (process.env.ELEVENLABS_API_KEY) {
     const eleven = await speakElevenLabs(text).catch(() => null);
     if (eleven) return { ...eleven, source: 'elevenlabs' };
   }
@@ -16,9 +17,10 @@ export async function speak(text) {
 }
 
 async function speakElevenLabs(text) {
+  const voiceId = process.env.ELEVENLABS_VOICE_ID?.trim() || DEFAULT_ELEVENLABS_VOICE_ID;
   // Verified via web: ElevenLabs streaming endpoint is POST /v1/text-to-speech/{voice_id}/stream and returns audio bytes.
   const response = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${process.env.ELEVENLABS_VOICE_ID}/stream`,
+    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`,
     {
       method: 'POST',
       headers: {
