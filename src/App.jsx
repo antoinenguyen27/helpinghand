@@ -156,14 +156,10 @@ export default function App() {
             ? `Voice processing returned an error (mode=${segmentMode}).`
             : `Voice processing completed (mode=${segmentMode}).`
         );
-      if (result.transcript) {
-        appendStatus('transcript', result.transcript);
-        appendUserVoiceChat(result.transcript, segmentMode, demoStageContext);
-      }
-      if (result.response) {
-        appendStatus('agent', result.response);
-        appendAgentChat(result.response);
-      }
+        if (result.response) {
+          appendStatus('agent', result.response);
+          appendAgentChat(result.response);
+        }
         if (segmentMode === MODES.DEMO && typeof result.awaitingConfirmation === 'boolean') {
           setDemoAwaitingConfirmation(result.awaitingConfirmation);
         }
@@ -182,7 +178,7 @@ export default function App() {
         setPendingAgentOps((value) => Math.max(0, value - 1));
       }
     },
-    [appendAgentChat, appendStatus, appendUserVoiceChat, refreshSkills, ua]
+    [appendAgentChat, appendStatus, refreshSkills, ua]
   );
 
   const processText = useCallback(
@@ -292,6 +288,9 @@ export default function App() {
 
     const unsubscribeStatus = ua.onStatus((payload) => {
       appendStatus(payload.type || 'status', payload.message);
+      if (payload.type === 'transcript' && payload.source === 'voice') {
+        appendUserVoiceChat(payload.message, payload.mode || MODES.WORK, payload.stage || null);
+      }
     });
 
     const unsubscribeExecution = ua.onExecutionState((payload) => {
@@ -302,7 +301,7 @@ export default function App() {
       unsubscribeStatus?.();
       unsubscribeExecution?.();
     };
-  }, [appendStatus, refreshSettings, refreshSkills, ua]);
+  }, [appendStatus, appendUserVoiceChat, refreshSettings, refreshSkills, ua]);
 
   useEffect(() => {
     if (!ua) return;

@@ -227,6 +227,11 @@ ipcMain.handle(IPC_CHANNELS.VOICE_PROCESS, async (_event, payload) => {
     }
 
     pushStatus(`Transcription complete (${transcript.length} chars).`, 'api');
+    pushStatus(transcript, 'transcript', {
+      source: 'voice',
+      mode: mode || 'work',
+      stage: demoStage || null
+    });
 
     if (mode === 'demo') {
       pushStatus(`Routing transcript to demo agent (stage=${demoStage || 'capture'}).`, 'status');
